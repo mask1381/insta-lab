@@ -1,5 +1,4 @@
-private/
 .env
-local_worker.py
-*.session
 __pycache__/
+*.pyc
+data/
