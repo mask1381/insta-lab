@@ -205,8 +205,7 @@ def _detect_topic(text: str, mode: str) -> str:
     return ""
 
 
-def shape_hub_caption(raw: str, topic_mode: str = "auto", pack: dict | None = None, aliases: dict | None = None) -> str:
-    """قالب Hub: تیتر + Via + هشتگ‌های مجموعه کانال (موضوع، بازی، یک اسم)."""
+def hub_parts(raw: str, topic_mode: str = "auto", pack: dict | None = None, aliases: dict | None = None) -> dict:
     pack = pack or {}
     names = list(pack.get("names") or [])
     if aliases:
@@ -237,42 +236,90 @@ def shape_hub_caption(raw: str, topic_mode: str = "auto", pack: dict | None = No
         out_tags.append(f"#{game}")
     if char and _nk(char) not in {_nk(game), _nk(topic)}:
         out_tags.append(f"#{char}")
-    parts = [title] if title else []
-    read = [l for l in rest if re.search(r"read full|youtube:", l, re.I)][-1:]
-    mid = via + [l for l in rest if not re.search(r"read full|youtube:", l, re.I)]
-    mid = [l for l in mid if l != title][:6]
-    if read:
-        mid.append(read[0])
-    if mid:
-        parts.append("\n".join(mid))
-    if out_tags:
-        parts.append(" ".join(out_tags))
-    return "\n\n".join(p for p in parts if p).strip()
+    result_re = re.compile(r"read full|youtube:|redeem now|🔗", re.I)
+    result_lines = [l for l in rest if result_re.search(l)]
+    mid = via + [l for l in rest if not result_re.search(l) and l != title]
+    return {
+        "title": title,
+        "body": "\n".join(mid[:8]).strip(),
+        "result": result_lines[-1] if result_lines else "",
+        "hashtags": out_tags,
+    }
+
+
+def shape_hub_caption(raw: str, topic_mode: str = "auto", pack: dict | None = None, aliases: dict | None = None) -> str:
+    p = hub_parts(raw, topic_mode, pack, aliases)
+    return "\n\n".join(x for x in (p["title"], p["body"], p["result"], " ".join(p["hashtags"])) if x).strip()
+
+
+def _math_font(text: str, bold: bool) -> str:
+    out = []
+    for ch in text or "":
+        o = ord(ch)
+        if 65 <= o <= 90:
+            out.append(chr((0x1D400 if bold else 0x1D434) + o - 65))
+        elif 97 <= o <= 122:
+            if not bold and ch == "h":
+                out.append("\u210e")
+            else:
+                out.append(chr((0x1D41A if bold else 0x1D44E) + o - 97))
+        elif bold and 48 <= o <= 57:
+            out.append(chr(0x1D7CE + o - 48))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _credit_only(body: str) -> bool:
+    lines = [l.strip() for l in (body or "").splitlines() if l.strip()]
+    return bool(lines) and all(re.match(r"^(via |source:)", l, re.I) for l in lines)
+
+
+def style_title(text: str, font: str) -> str:
+    t = (text or "").strip()
+    if not t:
+        return ""
+    if font == "u_italic":
+        return html.escape(_math_font(t, False))
+    if font == "u_bold":
+        return html.escape(_math_font(t, True))
+    if font == "bold":
+        return f"<b>{html.escape(t)}</b>"
+    if font == "italic":
+        return f"<i>{html.escape(t)}</i>"
+    return html.escape(t)
+
+
+def wrap_quote(text: str, mode: str) -> str:
+    t = (text or "").strip()
+    if not t:
+        return ""
+    inner = html.escape(t)
+    if mode == "expand":
+        return f"<blockquote expandable>{inner}</blockquote>"
+    if mode == "quote":
+        return f"<blockquote>{inner}</blockquote>"
+    return inner
+
+
+def style_result(text: str, mode: str) -> str:
+    t = (text or "").strip()
+    if not t:
+        return ""
+    if mode == "italic":
+        return f"<i>{html.escape(t)}</i>"
+    if mode in ("quote", "expand"):
+        return wrap_quote(t, mode)
+    return html.escape(t)
 
 
 def build_caption(original: str, only_tags: bool = False, rules: dict | None = None) -> str:
     """کپشن نهایی طبق قرارداد بات (چیدمان) یا پاس‌ثرو + برند/فوتر."""
     limit = config.MAX_TG_CAPTION_LEN
     cfg = _CFG if isinstance(_CFG, dict) else {}
-    if cfg.get("hub_policy") and not only_tags:
-        body = shape_hub_caption(
-            original or "",
-            topic_mode=str((rules or {}).get("topic_mode") or "auto"),
-            pack=cfg.get("hub_tags") if isinstance(cfg.get("hub_tags"), dict) else {},
-            aliases=cfg.get("hub_aliases") if isinstance(cfg.get("hub_aliases"), dict) else None,
-        )
-        suffix = _FOOTER
-        if _BRAND_TAG:
-            suffix = ("#" + _BRAND_TAG) + (("\n\n" + suffix) if suffix else "")
-        if _has_footer(body, _FOOTER):
-            suffix = ("#" + _BRAND_TAG) if _BRAND_TAG else ""
-        suffix_cost = len(suffix) + (2 if body and suffix else 0)
-        body = trim_caption(body, limit=max(0, limit - suffix_cost))
-        text = body + (("\n\n" + suffix) if body and suffix else suffix)
-        return text[:limit] if text else ""
     layout = [x for x in (cfg.get("layout") or []) if isinstance(x, str)]
 
-    if only_tags or not layout:
+    if only_tags or (not layout and not cfg.get("hub_policy")):
         suffix = _FOOTER
         if _BRAND_TAG:
             suffix = ("#" + _BRAND_TAG) + (("\n\n" + suffix) if suffix else "")
@@ -293,6 +340,17 @@ def build_caption(original: str, only_tags: bool = False, rules: dict | None = N
     sep = "\n" if cfg.get("joiner") == "nl" else "\n\n"
     split_mode = cfg.get("split") if cfg.get("split") in ("lines", "blank", "sentence", "as_is") else "lines"
     parts = _split_essay(cleaned, split_mode)
+    hub = bool(cfg.get("hub_policy")) and not only_tags
+    if hub:
+        hp = hub_parts(
+            original or "",
+            topic_mode=str((rules or {}).get("topic_mode") or "auto"),
+            pack=cfg.get("hub_tags") if isinstance(cfg.get("hub_tags"), dict) else {},
+            aliases=cfg.get("hub_aliases") if isinstance(cfg.get("hub_aliases"), dict) else None,
+        )
+        parts = {"title": hp["title"], "body": hp["body"], "result": hp["result"], "hashtags": hp["hashtags"]}
+        if not layout:
+            layout = ["title", "body", "result", "hashtags", "footer"]
     tags_mode = cfg.get("tags") or "keep"
     if tags_mode in ("extract", "drop"):
         parts["title"] = _strip_tags(parts["title"])
@@ -311,7 +369,7 @@ def build_caption(original: str, only_tags: bool = False, rules: dict | None = N
     tpl = cfg.get("templates") if isinstance(cfg.get("templates"), dict) else {}
     extras = cfg.get("extras") if isinstance(cfg.get("extras"), dict) else {}
 
-    if essay_len < short_min and short_mode == "as_is":
+    if essay_len < short_min and short_mode == "as_is" and not hub:
         suffix_bits = []
         if "brand" in layout and brand:
             suffix_bits.append("#" + brand)
@@ -321,7 +379,7 @@ def build_caption(original: str, only_tags: bool = False, rules: dict | None = N
         text = sep.join([x for x in (cleaned, attached) if x])
         return text[:limit]
 
-    if essay_len < short_min:
+    if essay_len < short_min and not hub:
         if short_mode == "title_only":
             use_layout = [x for x in ("title", "hashtags", "brand", "footer") if x in layout or x in ("title", "hashtags")]
         elif short_mode == "tags_only":
@@ -337,11 +395,21 @@ def build_caption(original: str, only_tags: bool = False, rules: dict | None = N
         if key == "prefix":
             chunk = extras.get("prefix") or ""
         elif key == "title":
-            chunk = _apply_tpl(tpl.get("title") or "<b>{title}</b>", parts.get("title") or "", ["title"])
+            font = str(cfg.get("title_font") or "as_is")
+            if font != "as_is":
+                chunk = style_title(parts.get("title") or "", font)
+            else:
+                chunk = _apply_tpl(tpl.get("title") or "<b>{title}</b>", parts.get("title") or "", ["title"])
         elif key == "body":
-            chunk = _apply_tpl(tpl.get("body") or "{body}", parts.get("body") or "", ["body"])
+            quote = str(cfg.get("body_quote") or "off")
+            body_txt = parts.get("body") or ""
+            if quote != "off" and body_txt:
+                chunk = wrap_quote(body_txt, quote)
+            else:
+                chunk = _apply_tpl(tpl.get("body") or "{body}", body_txt, ["body"])
         elif key == "result":
-            chunk = _apply_tpl(tpl.get("result") or "<i>{result}</i>", parts.get("result") or "", ["result"])
+            rstyle = str(cfg.get("result_style") or "italic")
+            chunk = style_result(parts.get("result") or "", rstyle)
         elif key == "hashtags":
             tags = parts.get("hashtags") or []
             chunk = _apply_tpl(tpl.get("hashtags") or "{hashtags}", " ".join(tags), ["hashtags"], escape=False) if tags else ""

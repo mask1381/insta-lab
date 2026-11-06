@@ -129,11 +129,29 @@ def test_hub_shape():
     assert "#News" in official and "#Leak" not in official, official
     clip = shape_hub_caption("Mitya extract 1\n#Clip #GenshinImpact #Mitya", pack=pack)
     assert "#Clip" in clip and "#Mitya" in clip
-    set_caption_cfg({"hub_policy": True, "hub_tags": pack})
+    set_caption_cfg({
+        "hub_policy": True,
+        "hub_tags": pack,
+        "layout": ["title", "body", "result", "hashtags", "footer"],
+        "title_font": "u_italic",
+        "body_quote": "quote",
+        "result_style": "italic",
+        "joiner": "nlnl",
+        "tags": "extract",
+    })
     set_footer("FOOTER")
     out = build_caption("LILY GACHA ANIMATION\n#WutheringWaves #wuwa #kurogames", rules={"topic_mode": "auto"})
     assert out.endswith("FOOTER") and "#WutheringWaves" in out and "#kurogames" not in out.lower()
     assert "#Lily" not in out
+    assert "𝐿𝐼𝐿𝑌" in out or "\U0001d441" in out
+    news = build_caption(
+        "Version 3.8 Livestream Recap\nRead Full Article: https://x.com/a\n#WutheringWaves",
+        rules={"topic_mode": "official"},
+    )
+    assert "<i>Read Full Article:" in news and news.count("Read Full Article") == 1
+    leak_html = build_caption("ANASTASYA FREEZING\nVia Seele\n#genshinimpact", rules={"topic_mode": "leak"})
+    assert "<blockquote>Via Seele</blockquote>" in leak_html
+    assert "#Leak" in leak_html
     set_caption_cfg({})
     set_footer("")
     print("test_hub_shape OK")
