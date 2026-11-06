@@ -394,7 +394,7 @@ def _filter_tags(tags, rules: dict) -> list[str]:
 _FOLLOW_LINE = re.compile(
     r"(?im)^\s*(?:follow(?:\s+\w+){0,6}\s+@[\w.]+.*|follow\s+(?:us\s+)?for\s+more.*)\s*$"
 )
-_JUNK_LINE = re.compile(r"(?im)^\s*[-–—.]+\s*$")
+_JUNK_LINE = re.compile(r"(?im)^\s*(?:[-–—.]+|💠+)\s*$")
 _DETAIL_LABEL = re.compile(
     r"(?im)^\s*anime\s+de[a-z]{3,16}\b[^\n:]*:?\s*(.*)$"
 )
@@ -561,6 +561,7 @@ def profile_parts(raw: str, rules: dict | None = None, pack: dict | None = None)
     if not tags and r.get("fallback_hashtag"):
         tags = ["#" + str(r["fallback_hashtag"]).lstrip("#")]
     tags = _filter_tags(tags, r) or tags
+    body = "\n".join(ln for ln in body.splitlines() if not _JUNK_LINE.match(ln)).strip()
     return {"title": title, "body": body, "result": result, "hashtags": tags}
 
 
