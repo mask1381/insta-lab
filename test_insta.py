@@ -241,6 +241,21 @@ def test_nexus_profile():
     assert evaluate({"caption": spam, "media_items": [{"url": "u", "type": "photo"}]}, rules)["skip"] == "caption_match"
     items = apply_media_drops([{"u": 1}, {"u": 2}, {"u": 3}, {"u": 4}], {"drop_first": 1, "drop_last": 1})
     assert [x["u"] for x in items] == [2, 3]
+    news = caption.build_caption(
+        "Mushoku Tensei takes 1\n• It beat Re:Zero.\nFollow for more @24hranimenews\nMushokuTenseiJoblessReincarnation ReZero LightNovels AnimeNews",
+        rules={"split_title": True, "own_hashtags": True, "blocked_patterns": [r"animenews$"]},
+    )
+    assert "<b>Mushoku Tensei takes 1</b>" in news, news
+    assert "Follow" not in news and "@24hranimenews" not in news, news
+    assert "#MushokuTenseiJoblessReincarnation" in news and "#ReZero" in news, news
+    assert "AnimeNews" not in news.replace("THE LABS", "")
+    amv = caption.build_caption(
+        "He's so crazy\nAnime Details ✨:\nFirefly Wedding is an anime.\n#hotarunoyomeiri #fireflywedding #animeedit",
+        rules={"split_title": True, "own_hashtags": True, "extra_hashtags": ["AMV"], "blocked_hashtags": ["anime", "animeedit", "edit"], "blocked_patterns": ["edit$"]},
+    )
+    assert "so crazy" in amv and "Anime Details" not in amv, amv
+    assert "Firefly Wedding is an anime." in amv, amv
+    assert "#AMV" in amv and "#hotarunoyomeiri" in amv and "#animeedit" not in amv.lower()
     caption.set_caption_cfg({})
     caption.set_footer("")
     print("test_nexus_profile OK")

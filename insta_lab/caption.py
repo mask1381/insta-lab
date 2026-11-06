@@ -337,8 +337,11 @@ def skip_caption_reason(raw: str, rules: dict | None = None) -> str:
 
 
 def _to_hashtag(name: str) -> str:
-    t = re.sub(r"[^A-Za-z0-9]", "", unicodedata.normalize("NFKD", name or ""))
-    return t[:40] if len(t) >= 2 else ""
+    parts = re.findall(r"[A-Za-z0-9]+", unicodedata.normalize("NFKD", name or ""))
+    if not parts:
+        return ""
+    tag = "".join(p[:1].upper() + p[1:] for p in parts)
+    return tag[:40] if len(tag) >= 2 else ""
 
 
 def _latin_tag(h: str) -> str:
@@ -388,6 +391,29 @@ def _filter_tags(tags, rules: dict) -> list[str]:
     return out
 
 
+_FOLLOW_LINE = re.compile(
+    r"(?im)^\s*(?:follow(?:\s+\w+){0,6}\s+@[\w.]+.*|follow\s+(?:us\s+)?for\s+more.*)\s*$"
+)
+_JUNK_LINE = re.compile(r"(?im)^\s*[-–—.]+\s*$")
+_DETAIL_LABEL = re.compile(
+    r"(?im)^\s*anime\s*(?:details?|description)\b[^\n:]*:?\s*(.*)$"
+)
+_DEFAULT_RESULT = re.compile(r"read full|youtube:|redeem now|🔗|^\s*song\s*:", re.I)
+
+
+def _strip_follow(text: str) -> str:
+    return _FOLLOW_LINE.sub("", text or "")
+
+
+def _loose_tag_tokens(line: str) -> list[str]:
+    toks = [t.strip("#,;.") for t in (line or "").split() if t.strip("#,;.")]
+    if len(toks) < 2:
+        return []
+    if all(re.fullmatch(r"[A-Za-z][A-Za-z0-9]{2,}", t) for t in toks):
+        return toks
+    return []
+
+
 def _strip_end_tags(text: str) -> str:
     lines = []
     trail = re.compile(r"(?:[ \t]*#[^\s#]+)+[ \t]*$")
@@ -432,9 +458,8 @@ def _keep_only_lines(text: str, patterns) -> str:
 
 def profile_parts(raw: str, rules: dict | None = None, pack: dict | None = None) -> dict:
     r = rules or {}
-    text = str(raw or "")
-    if r.get("nfkc"):
-        text = unicodedata.normalize("NFKC", text)
+    text = unicodedata.normalize("NFKC", str(raw or ""))
+    text = _strip_follow(text)
     for pair in r.get("text_replace") or []:
         if not isinstance(pair, (list, tuple)) or len(pair) < 2:
             continue
@@ -455,11 +480,17 @@ def profile_parts(raw: str, rules: dict | None = None, pack: dict | None = None)
             body = fixed
     elif r.get("raw_caption"):
         body = _strip_end_tags(text)
+        if r.get("split_title") is not False:
+            lines = [l.strip() for l in body.splitlines() if l.strip() and not _JUNK_LINE.match(l)]
+            if lines:
+                title, body = lines[0], "\n".join(lines[1:]).strip()
     else:
         body = _apply_strip(_drop_block_lines(text, r.get("strip_blocks")), [])
         if r.get("keep_lines"):
             body = _keep_only_lines(body, r.get("keep_lines"))
         body = _strip_end_tags(body)
+        body = _DETAIL_LABEL.sub(lambda m: (m.group(1) or "").strip(), body).strip()
+        body = "\n".join(ln for ln in body.splitlines() if not _JUNK_LINE.match(ln)).strip()
         split_on = r.get("split_title")
         if split_on is None:
             split_on = True
@@ -472,21 +503,37 @@ def profile_parts(raw: str, rules: dict | None = None, pack: dict | None = None)
                 body = re.sub(str(r["strip_label"]), "", body, count=1, flags=re.I).strip()
             except re.error:
                 pass
-        if r.get("result_field"):
-            try:
-                rf = re.compile(str(r["result_field"]), re.I)
-                keep, hit = [], ""
-                for ln in body.splitlines():
-                    if rf.search(ln) and not hit:
-                        hit = ln.strip()
-                    else:
-                        keep.append(ln)
-                result, body = hit, "\n".join(keep).strip()
-            except re.error:
-                pass
+    if body and not r.get("drop_text") and not fixed:
+        body_lines = [ln for ln in body.splitlines()]
+        if body_lines:
+            loose = _loose_tag_tokens(body_lines[-1])
+            if loose:
+                tags.extend("#" + _to_hashtag(t) for t in loose)
+                body_lines = body_lines[:-1]
+                body = "\n".join(body_lines).strip()
+        result_pat = r.get("result_field") or _DEFAULT_RESULT.pattern
+        try:
+            rf = re.compile(str(result_pat), re.I | re.M)
+            keep, hit = [], ""
+            for ln in body.splitlines():
+                if rf.search(ln) and not hit:
+                    hit = ln.strip()
+                else:
+                    keep.append(ln)
+            result, body = hit, "\n".join(keep).strip()
+        except re.error:
+            pass
     own = r.get("own_hashtags") or r.get("raw_caption") or r.get("hashtag_mode") in ("own", "raw")
-    if own:
-        tags = _filter_tags(extract_hashtags(text), r)
+    collected = list(tags)
+    take_own = own or (
+        not r.get("tags_from_field")
+        and r.get("hashtag_mode") not in ("pack", "none")
+        and not r.get("drop_text")
+        and not r.get("fixed_caption")
+    )
+    if take_own:
+        collected.extend(extract_hashtags(text))
+    tags = collected
     if not tags and r.get("tags_from_field"):
         try:
             m = re.search(str(r["tags_from_field"]), text, re.I | re.M)
@@ -495,7 +542,7 @@ def profile_parts(raw: str, rules: dict | None = None, pack: dict | None = None)
         if m:
             h = _to_hashtag(m.group(1))
             if h:
-                tags = _filter_tags(["#" + h], r) or ["#" + h]
+                tags = tags + ["#" + h]
     if not tags and r.get("hashtag_fallback") in ("pack", "dictionary"):
         blob = f"{title}\n{body}\n{text}"
         game = match_pack(blob, (pack or {}).get("games") or [])
@@ -638,7 +685,11 @@ def build_caption(original: str, only_tags: bool = False, rules: dict | None = N
             chunk = style_result(parts.get("result") or "", rstyle)
         elif key == "hashtags":
             tags = parts.get("hashtags") or []
-            chunk = _apply_tpl(tpl.get("hashtags") or "{hashtags}", " ".join(tags), ["hashtags"], escape=False) if tags else ""
+            joined = " ".join(tags)
+            if tags and cfg.get("nexus_policy") and "{hashtags}" in (tpl.get("hashtags") or "{hashtags}") and "blockquote" not in (tpl.get("hashtags") or ""):
+                chunk = f"<blockquote>💠 {joined}</blockquote>"
+            else:
+                chunk = _apply_tpl(tpl.get("hashtags") or "{hashtags}", joined, ["hashtags"], escape=False) if tags else ""
         elif key == "cta":
             extra_cta = extras.get("cta") or ""
             chunk = _apply_tpl(tpl.get("cta") or "{cta}", extra_cta, ["cta"], escape=False) if extra_cta else ""
