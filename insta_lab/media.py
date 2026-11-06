@@ -87,8 +87,16 @@ def convert_webp_to_jpg(webp_path: str) -> str:
 
 
 def crop_bottom_pct(path: str, pct: float) -> str:
-    """برشِ پایین عکس به اندازه‌ی pct (۰ تا ۱) — اختیاری، از batch/پروفایل."""
-    if pct is None or pct <= 0 or pct >= 1:
+    """برش پایین عکس. pct می‌تواند ۰–۱ یا درصد ۰–۴۰ باشد (بات درصد می‌فرستد)."""
+    if pct is None:
+        return path
+    try:
+        pct = float(pct)
+    except (TypeError, ValueError):
+        return path
+    if pct > 1:
+        pct = pct / 100.0
+    if pct <= 0 or pct >= 1:
         return path
     try:
         with Image.open(path) as img:

@@ -152,6 +152,24 @@ def make_when(now, idx, gap_min):
     return now + __import__("datetime").timedelta(minutes=gap_min * (idx + 1))
 
 
+def rules_for(batch: dict, post: dict) -> dict:
+    """قواعد موتور < پروفایل پیج < قواعد خود پست."""
+    r = dict(batch.get("post_rules") or {})
+    profs = batch.get("profiles") or {}
+    name = post.get("profile")
+    if name and isinstance(profs.get(name), dict):
+        p = profs[name]
+        for k in ("skip_video", "only_tags", "crop_bottom_pct"):
+            if p.get(k) is not None:
+                r[k] = p[k]
+    pr = post.get("rules")
+    if isinstance(pr, dict):
+        for k, v in pr.items():
+            if v is not None:
+                r[k] = v
+    return r
+
+
 def send_one(post, rules, target, when, workdir) -> tuple:
     """یک پست = ارزیابی + دانلود + ارسال. -> (status, code, real_when)."""
     from insta_lab.insta import evaluate, materialize
@@ -164,9 +182,13 @@ def send_one(post, rules, target, when, workdir) -> tuple:
     from insta_lab.caption import build_caption
     caption = build_caption(post.get("caption") or "", only_tags=bool((rules or {}).get("only_tags")))
 
-    files, _wd = materialize(post, rules, workdir)
+    packed = materialize(post, rules, workdir)
+    # materialize لیست فایل برمی‌گرداند؛ تست‌ها گاهی (files, workdir) می‌دهند
+    files = packed[0] if isinstance(packed, tuple) else packed
     if not files:
         return ("skipped", "no_media", None)
+    if isinstance(files, (str, bytes)):
+        files = [files]
 
     ids = schedule_send(target, files, caption, when)
     if not ids:
@@ -188,7 +210,6 @@ def run(batch: dict, sink: AckSink) -> int:
     dry_run = bool(batch.get("dry"))
     target = ref["target_chat_id"]
     posts = batch.get("posts") or []
-    rules = batch.get("post_rules") or {}
     gap_min = int(batch.get("schedule_gap_min") or 0)
 
     if not target:
@@ -228,7 +249,11 @@ def run(batch: dict, sink: AckSink) -> int:
                     when = make_when(now, idx, gap_min)
             else:
                 when = make_when(now, idx, gap_min)
-            status, code, real_when = send_one(post, rules, target, when, workdir)
+            try:
+                status, code, real_when = send_one(post, rules_for(batch, post), target, when, workdir)
+            except Exception as e:
+                log(f"post {pos_idx} crashed: {type(e).__name__}: {e}")
+                status, code, real_when = "failed", type(e).__name__[:40], None
             sink.ack(pos_idx, status, code, fmt_when(real_when))
             time.sleep(SEND_GAP_SECONDS if status == "sent" else 0.2)
             if status == "sent" and key:

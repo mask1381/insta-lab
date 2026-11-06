@@ -66,7 +66,9 @@ class SentStore:
                 new_ids.append(i)
         if new_ids:
             if self.sink and not self.dry_run:
-                self.sink.sent(new_ids)
+                fn = getattr(self.sink, "sent_ids", None) or getattr(self.sink, "sent", None)
+                if callable(fn):
+                    fn(new_ids)
             elif self.path and not self.dry_run:
                 self.save()
 
