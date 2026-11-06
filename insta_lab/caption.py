@@ -396,7 +396,7 @@ _FOLLOW_LINE = re.compile(
 )
 _JUNK_LINE = re.compile(r"(?im)^\s*[-–—.]+\s*$")
 _DETAIL_LABEL = re.compile(
-    r"(?im)^\s*anime\s*(?:details?|description)\b[^\n:]*:?\s*(.*)$"
+    r"(?im)^\s*anime\s+de[a-z]{3,16}\b[^\n:]*:?\s*(.*)$"
 )
 _DEFAULT_RESULT = re.compile(r"read full|youtube:|redeem now|🔗|^\s*song\s*:", re.I)
 

@@ -253,6 +253,12 @@ def test_nexus_profile():
         "He's so crazy\nAnime Details ✨:\nFirefly Wedding is an anime.\n#hotarunoyomeiri #fireflywedding #animeedit",
         rules={"split_title": True, "own_hashtags": True, "extra_hashtags": ["AMV"], "blocked_hashtags": ["anime", "animeedit", "edit"], "blocked_patterns": ["edit$"]},
     )
+    typo = caption.build_caption(
+        "Senju is here\nAnime Depscrition ✨:\nTokyo Revengers is an anime.\n#tokyorevengers",
+        rules={"split_title": True, "own_hashtags": True},
+    )
+    assert "Senju is here" in typo and "Depscrition" not in typo, typo
+    assert "Tokyo Revengers is an anime." in typo
     assert "so crazy" in amv and "Anime Details" not in amv, amv
     assert "Firefly Wedding is an anime." in amv, amv
     assert "#AMV" in amv and "#hotarunoyomeiri" in amv and "#animeedit" not in amv.lower()
