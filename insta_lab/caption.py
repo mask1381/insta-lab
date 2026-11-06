@@ -1,8 +1,8 @@
 """
 موتور کپشن Insta Lab — کانال-اگنوستیک.
 
-قالب، حذف تکه، تشخیص تبلیغ، انشا (تیتر/بدنه/نتیجه) همه از batch["caption"] می‌آیند.
-فوتر و برند هم از batch.
+قالب، حذف تکه، تشخیص تبلیغ، انشا، هشتگ، چیدمان، متن ثابت همه از batch["caption"].
+فوتر و برند از batch (و بلوک‌های layout).
 """
 from __future__ import annotations
 
@@ -22,6 +22,9 @@ DEFAULT_AD = [
     r"پیش.?خرید", r"تخفیف", r"کد تخفیف", r"اسپانسر", r"تبلیغ",
     r"لینک در بیو", r"فروشگاه رسمی", r"سفارش از",
 ]
+
+TAG_RE = re.compile(r"#[^\s#]+")
+HASHTAG_ONLY_RE = re.compile(r"(?:#[^\s#]+\s*)+")
 
 
 def set_footer(footer: str) -> None:
@@ -46,7 +49,7 @@ def get_brand_tag() -> str:
 def extract_hashtags(caption: str) -> list[str]:
     if not caption:
         return []
-    return re.findall(r"#[\w؀-ۿ]+", caption)
+    return TAG_RE.findall(caption)
 
 
 def trim_caption(caption: str, limit: int = None) -> str:
@@ -91,101 +94,142 @@ def is_ad(text: str) -> bool:
     return False
 
 
-def split_essay(text: str) -> dict:
+def _strip_tags(text: str) -> str:
+    out = TAG_RE.sub("", text or "")
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
+
+
+def split_essay(text: str, mode: str | None = None) -> dict:
     tags = extract_hashtags(text)
-    lines = []
-    for ln in (text or "").splitlines():
-        s = ln.strip()
-        if not s:
-            continue
-        if re.fullmatch(r"(?:#[\w؀-ۿ]+\s*)+", s):
-            continue
-        lines.append(s)
-    if not lines:
+    mode = mode or str(_CFG.get("split") or "lines")
+    if mode == "as_is":
+        return {"title": (text or "").strip(), "body": "", "result": "", "hashtags": tags}
+
+    def keep(s: str) -> bool:
+        s = s.strip()
+        return bool(s) and not HASHTAG_ONLY_RE.fullmatch(s)
+
+    if mode == "blank":
+        chunks = [p.strip() for p in re.split(r"\n\s*\n", text or "") if keep(p)]
+    elif mode == "sentence":
+        blob = " ".join(ln.strip() for ln in (text or "").splitlines() if keep(ln)).strip()
+        chunks = [s.strip() for s in re.split(r"(?<=[.!?؟۔])\s+", blob) if s.strip()] if blob else []
+    else:
+        chunks = [ln.strip() for ln in (text or "").splitlines() if keep(ln)]
+
+    if not chunks:
         return {"title": "", "body": "", "result": "", "hashtags": tags}
-    title = lines[0]
-    if len(lines) == 1:
-        return {"title": title, "body": "", "result": "", "hashtags": tags}
-    if len(lines) == 2:
-        return {"title": title, "body": lines[1], "result": "", "hashtags": tags}
+    if len(chunks) == 1:
+        return {"title": chunks[0], "body": "", "result": "", "hashtags": tags}
+    if len(chunks) == 2:
+        return {"title": chunks[0], "body": chunks[1], "result": "", "hashtags": tags}
     return {
-        "title": title,
-        "body": "\n".join(lines[1:-1]),
-        "result": lines[-1],
+        "title": chunks[0],
+        "body": "\n".join(chunks[1:-1]),
+        "result": chunks[-1],
         "hashtags": tags,
     }
 
 
-def _apply_tpl(tpl: str, value: str) -> str:
+def _apply_tpl(tpl: str, value: str, keys: tuple[str, ...], escape: bool = True) -> str:
     if not value:
         return ""
     raw = tpl or "{value}"
-    if "{title}" in raw or "{body}" in raw or "{result}" in raw or "{value}" in raw:
-        return raw.replace("{title}", _esc(value)).replace("{body}", _esc(value)).replace("{result}", _esc(value)).replace("{value}", _esc(value))
-    return f"{raw}{_esc(value)}" if raw else _esc(value)
+    v = _esc(value) if escape else str(value)
+    used = False
+    out = raw
+    for k in (*keys, "value"):
+        token = "{" + k + "}"
+        if token in out:
+            out = out.replace(token, v)
+            used = True
+    return out if used else f"{raw}{v}"
+
+
+def _join(chunks: list[str]) -> str:
+    sep = "\n" if str(_CFG.get("joiner") or "nlnl") == "nl" else "\n\n"
+    return sep.join(x for x in chunks if x)
 
 
 def _suffix() -> str:
-    suffix = _FOOTER
+    bits = []
     if _BRAND_TAG:
-        suffix = ("#" + _BRAND_TAG) + ("\n\n" + suffix if suffix else "")
-    return suffix
+        bits.append("#" + _BRAND_TAG)
+    if _FOOTER:
+        bits.append(_FOOTER)
+    return _join(bits)
+
+
+def _attach(body: str, tail: str, limit: int) -> str:
+    if not tail:
+        return trim_caption(body, limit)
+    sep = "\n" if str(_CFG.get("joiner") or "nlnl") == "nl" else "\n\n"
+    extra = len(sep) if body else 0
+    body = trim_caption(body, max(0, limit - len(tail) - extra))
+    text = _join([body, tail]) if body else tail
+    return text[:limit] if text else ""
 
 
 def build_caption(original: str, only_tags: bool = False) -> str:
     limit = config.MAX_TG_CAPTION_LEN
-    suffix = _suffix()
     cleaned = apply_strip(original or "")
+    extras = _CFG.get("extras") if isinstance(_CFG.get("extras"), dict) else {}
+    tpl = _CFG.get("templates") if isinstance(_CFG.get("templates"), dict) else {}
+    layout = list(_CFG.get("layout") or ["title", "body", "result", "hashtags", "brand", "footer"])
 
     if only_tags:
-        body = " ".join(extract_hashtags(cleaned))
-        suffix_cost = len(suffix) + (2 if body and suffix else 0)
-        body = trim_caption(body, limit=max(0, limit - suffix_cost))
-        text = body + ("\n\n" + suffix if body and suffix else suffix)
-        return text[:limit] if text else ""
+        return _attach(" ".join(extract_hashtags(cleaned)), _suffix(), limit)
 
     parts = split_essay(cleaned)
-    tpl = _CFG.get("templates") or {}
+    policy = str(_CFG.get("tags") or "keep")
+    if policy in ("extract", "drop"):
+        parts["title"] = _strip_tags(parts["title"])
+        parts["body"] = _strip_tags(parts["body"])
+        parts["result"] = _strip_tags(parts["result"])
+        if policy == "drop":
+            parts["hashtags"] = []
+
     short_min = int(_CFG.get("short_min") or 80)
     short_mode = str(_CFG.get("short_mode") or "as_is")
     essay_len = len((parts["title"] + parts["body"] + parts["result"]).strip())
 
-    layout = list(_CFG.get("layout") or ["title", "body", "result", "hashtags", "footer"])
-
     if essay_len < short_min:
-        if short_mode == "tags_only":
-            layout = ["hashtags", "footer"]
-        elif short_mode == "title_only":
-            layout = ["title", "hashtags", "footer"]
-        elif short_mode == "as_is":
-            body = cleaned
-            suffix_cost = len(suffix) + (2 if body and suffix else 0)
-            body = trim_caption(body, limit=max(0, limit - suffix_cost))
-            text = body + ("\n\n" + suffix if body and suffix else suffix)
-            return text[:limit] if text else ""
+        if short_mode == "as_is":
+            return _attach(cleaned, _suffix(), limit)
+        if short_mode == "title_only":
+            layout = ["title", "hashtags", "brand", "footer"]
+        elif short_mode == "tags_only":
+            layout = ["hashtags", "brand", "footer"]
+        else:
+            layout = list(_CFG.get("short_layout") or layout)
 
     blocks = []
     for key in layout:
-        if key == "title":
-            chunk = _apply_tpl(tpl.get("title") or "<b>{title}</b>", parts["title"])
+        if key == "prefix":
+            chunk = str(extras.get("prefix") or "")
+        elif key == "title":
+            chunk = _apply_tpl(tpl.get("title") or "<b>{title}</b>", parts["title"], ("title",))
         elif key == "body":
-            chunk = _apply_tpl(tpl.get("body") or "{body}", parts["body"])
+            chunk = _apply_tpl(tpl.get("body") or "{body}", parts["body"], ("body",))
         elif key == "result":
-            chunk = _apply_tpl(tpl.get("result") or "<i>{result}</i>", parts["result"])
+            chunk = _apply_tpl(tpl.get("result") or "<i>{result}</i>", parts["result"], ("result",))
         elif key == "hashtags":
             tags = parts["hashtags"]
-            chunk = " ".join(tags) if tags else ""
+            chunk = _apply_tpl(tpl.get("hashtags") or "{hashtags}", " ".join(tags), ("hashtags",), escape=False) if tags else ""
+        elif key == "cta":
+            chunk = _apply_tpl(tpl.get("cta") or "{cta}", str(extras.get("cta") or ""), ("cta",), escape=False)
+        elif key == "extra":
+            chunk = str(extras.get("extra") or "")
+        elif key == "brand":
+            chunk = ("#" + _BRAND_TAG) if _BRAND_TAG else ""
         elif key == "footer":
-            continue
+            chunk = _FOOTER
         else:
             chunk = ""
         if chunk:
-            blocks.append(chunk)
+            blocks.append((key, chunk))
 
-    body = "\n\n".join(blocks).strip()
-    use_footer = "footer" in layout or not layout
-    attached = suffix if use_footer else ""
-    suffix_cost = len(attached) + (2 if body and attached else 0)
-    body = trim_caption(body, limit=max(0, limit - suffix_cost))
-    text = body + ("\n\n" + attached if body and attached else attached)
-    return text[:limit] if text else ""
+    trail = _join([c for k, c in blocks if k in ("brand", "footer")])
+    head = _join([c for k, c in blocks if k not in ("brand", "footer")])
+    return _attach(head, trail, limit)
