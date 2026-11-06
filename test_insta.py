@@ -108,23 +108,32 @@ def test_crop_skips_video():
 
 def test_hub_shape():
     from insta_lab.caption import shape_hub_caption, set_caption_cfg, set_footer, build_caption
-    leak = shape_hub_caption("ANASTASYA FREEZING\n\nVia Seele\n\n#genshinimpact #hoyoverse #tsaritsa #danica")
+    pack = {
+        "games": [{"tag": "GenshinImpact", "keys": ["genshinimpact", "genshin"]}, {"tag": "WutheringWaves", "keys": ["wutheringwaves", "wuwa"]}],
+        "names": [{"tag": "Anastasya", "keys": ["anastasya", "tsaritsa"]}, {"tag": "Mitya", "keys": ["mitya"]}],
+    }
+    leak = shape_hub_caption(
+        "ANASTASYA FREEZING\n\nVia Seele\n\n#genshinimpact #hoyoverse #tsaritsa #danica",
+        topic_mode="leak", pack=pack,
+    )
     assert "#Leak" in leak and "#GenshinImpact" in leak and "#Anastasya" in leak, leak
-    assert "#hoyoverse" not in leak.lower()
-    assert leak.count("#") <= 3
+    assert "#hoyoverse" not in leak.lower() and "#Danica" not in leak
+    no_via = shape_hub_caption("LILY GACHA ANIMATION\n#WutheringWaves", topic_mode="leak", pack=pack)
+    assert "#Leak" not in no_via, no_via
+    missing = shape_hub_caption("ANASTASYA FREEZING\nVia Seele\n#genshinimpact", topic_mode="leak", pack={"games": pack["games"], "names": []})
+    assert "#Anastasya" not in missing
     official = shape_hub_caption(
-        "Version 3.8 Livestream Recap\nSource: Wuthering Waves Official\n✦ Status\n↠ Official\n#WutheringWaves",
-        topic_mode="official",
+        "Version 3.8 Livestream Recap\nSource: Wuthering Waves Official\n✦ Status\n#WutheringWaves",
+        topic_mode="official", pack=pack,
     )
     assert "#News" in official and "#Leak" not in official, official
-    clip = shape_hub_caption("Mitya extract 1\n#Clip #GenshinImpact #Mitya")
+    clip = shape_hub_caption("Mitya extract 1\n#Clip #GenshinImpact #Mitya", pack=pack)
     assert "#Clip" in clip and "#Mitya" in clip
-    twice = shape_hub_caption(leak)
-    assert "#Leak" in twice and twice.count("#Leak") == 1
-    set_caption_cfg({"hub_policy": True})
+    set_caption_cfg({"hub_policy": True, "hub_tags": pack})
     set_footer("FOOTER")
     out = build_caption("LILY GACHA ANIMATION\n#WutheringWaves #wuwa #kurogames", rules={"topic_mode": "auto"})
     assert out.endswith("FOOTER") and "#WutheringWaves" in out and "#kurogames" not in out.lower()
+    assert "#Lily" not in out
     set_caption_cfg({})
     set_footer("")
     print("test_hub_shape OK")
@@ -161,7 +170,7 @@ def test_prepare_video_ffmpeg():
     ])
     silent = Path(prepare_video(str(vo)))
     muxed = Path(prepare_video(str(vo), audio_path=str(au)))
-    cropped = Path(prepare_video(str(wa), crop_bottom_pct=10, trim_start_sec=0.5, trim_end_sec=0.5))
+    cropped = Path(prepare_video(str(wa), crop_side="both", crop_pct=10, trim_start_sec=0.5, trim_end_sec=0.5))
     ms, mm, mc = video_meta(str(silent)), video_meta(str(muxed)), video_meta(str(cropped))
     assert ms.get("has_audio"), ms
     assert mm.get("has_audio"), mm

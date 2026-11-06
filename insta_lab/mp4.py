@@ -140,16 +140,32 @@ def video_meta(path: str) -> dict:
     return inspect_mp4(path)
 
 
-def crop_frac(pct) -> float:
+def crop_frac(pct, cap: float = 0.40) -> float:
     try:
         p = float(pct or 0)
     except (TypeError, ValueError):
         return 0.0
     if p > 1:
         p = p / 100.0
-    if p <= 0 or p >= 0.45:
+    if p <= 0:
         return 0.0
-    return p
+    return min(p, cap)
+
+
+def crop_vf(side: str, pct) -> list[str]:
+    side = (side or "bottom").lower()
+    if side in ("none", "off", "0"):
+        return []
+    frac = crop_frac(pct, 0.22 if side == "both" else 0.40)
+    if frac <= 0:
+        return []
+    if side == "top":
+        expr = f"crop=trunc(iw/2)*2:trunc(ih*(1-{frac:.4f})/2)*2:0:trunc(ih*{frac:.4f}/2)*2"
+    elif side == "both":
+        expr = f"crop=trunc(iw/2)*2:trunc(ih*(1-{2 * frac:.4f})/2)*2:0:trunc(ih*{frac:.4f}/2)*2"
+    else:
+        expr = f"crop=trunc(iw/2)*2:trunc(ih*(1-{frac:.4f})/2)*2:0:0"
+    return [expr]
 
 
 def _run_ff(cmd: list, timeout: int = 180) -> bool:
@@ -165,6 +181,8 @@ def prepare_video(
     path: str,
     *,
     crop_bottom_pct: float = 0,
+    crop_side: str = "bottom",
+    crop_pct: float | None = None,
     trim_start_sec: float = 0,
     trim_end_sec: float = 0,
     audio_path: str | None = None,
@@ -183,7 +201,8 @@ def prepare_video(
 
     start = max(0.0, float(trim_start_sec or 0))
     end_cut = max(0.0, float(trim_end_sec or 0))
-    frac = crop_frac(crop_bottom_pct)
+    pct = crop_pct if crop_pct is not None else crop_bottom_pct
+    vf = crop_vf(crop_side if pct else "none", pct)
     meta = video_meta(path)
     dur = float(meta.get("duration") or 0)
     keep = None
@@ -192,7 +211,7 @@ def prepare_video(
         if keep >= dur - 0.05 and start <= 0:
             keep = None
 
-    need_filter = frac > 0 or start > 0 or end_cut > 0 or audio_path
+    need_filter = bool(vf) or start > 0 or end_cut > 0 or audio_path
     out = str(Path(path).with_name(Path(path).stem + "_tg.mp4"))
     cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error"]
     if start > 0:
@@ -205,10 +224,6 @@ def prepare_video(
     if keep:
         cmd += ["-t", f"{keep:.3f}"]
 
-    vf = []
-    if frac > 0:
-        vf.append(f"crop=iw:ih*(1-{frac:.4f}):0:0")
-        vf.append("scale=trunc(iw/2)*2:trunc(ih/2)*2")
     maps = ["-map", "0:v:0"]
     if audio_path and os.path.isfile(audio_path):
         maps += ["-map", "1:a:0?"]

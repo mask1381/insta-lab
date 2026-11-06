@@ -73,11 +73,16 @@ def materialize(post: dict, rules: dict | None = None, workdir: str = "") -> lis
                     audio = None
             out.append(prepare_video(
                 path,
-                crop_bottom_pct=r.get("crop_bottom_pct") or 0,
+                crop_side=r.get("crop_video_side") or "bottom",
+                crop_pct=r.get("crop_video_pct") if r.get("crop_video_pct") is not None else r.get("crop_bottom_pct") or 0,
                 trim_start_sec=_num(r.get("trim_start_sec")),
                 trim_end_sec=_num(r.get("trim_end_sec")),
                 audio_path=audio,
             ))
         else:
-            out.append(media.crop_bottom_pct(path, float(r.get("crop_bottom_pct") or 0)))
+            out.append(media.crop_image(
+                path,
+                r.get("crop_photo_side") or "bottom",
+                r.get("crop_photo_pct") if r.get("crop_photo_pct") is not None else r.get("crop_bottom_pct") or 0,
+            ))
     return out

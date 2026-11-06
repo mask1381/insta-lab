@@ -151,40 +151,20 @@ def _has_footer(body: str, footer: str) -> bool:
     return bool(key) and key in body
 
 
-_GAMES = [
-    ("WutheringWaves", re.compile(r"wuthering\s*waves|#wuwa\b", re.I)),
-    ("GenshinImpact", re.compile(r"genshin|#gi\b(?![a-z])", re.I)),
-    ("HonkaiStarRail", re.compile(r"star\s*rail|#hsr\b", re.I)),
-    ("ZenlessZoneZero", re.compile(r"zenless|#zzz\b", re.I)),
-]
 _TOPIC_ORDER = ["Redeem_Code", "Clip", "Demo", "Guide", "Event", "Art", "News", "Leak"]
 _TOPIC_RE = {
     "Redeem_Code": re.compile(r"#redeem|#code\b|redeem\s*code|\bcodes\b", re.I),
-    "Clip": re.compile(r"#clip\b|\bextract\b|\bclip\b", re.I),
-    "Demo": re.compile(r"#demo\b|character trailer|official trailer|\bdemo\b", re.I),
+    "Clip": re.compile(r"#clip\b|\bextract\b", re.I),
+    "Demo": re.compile(r"#demo\b|character trailer|official trailer", re.I),
     "Guide": re.compile(r"#guide\b|creation guide", re.I),
     "Event": re.compile(r"#event\b|〓event|creator contest|#birthday\b", re.I),
     "Art": re.compile(r"#art\b|wallpaper|download\s*hd", re.I),
     "News": re.compile(r"#news\b|read full article|livestream recap", re.I),
-    "Leak": re.compile(r"#leak\b|(?:^|\n)via\s+[A-Za-z]|(?:^|\n)source:\s*(?!wuthering waves official|official\b)", re.I | re.M),
-}
-_CHAR_ALIASES = {
-    "anastasyafeodorovnasnezhnaya": "Anastasya", "anastasya": "Anastasya",
-    "tsaritsa": "Anastasya", "tsaritsas": "Anastasya",
-    "furinadefontaine": "Furina", "furina": "Furina",
-    "ilcapitano": "Capitano", "capitano": "Capitano",
-    "kukishinobu": "KukiShinobu", "mitya": "Mitya", "danica": "Danica",
-    "valeriy": "Valeriy", "noy": "Noy", "varka": "Varka", "lily": "Lily",
-    "hiyuki": "Hiyuki", "suoming": "Suoming", "hsin": "Hsin",
-    "sandrone": "Sandrone", "odette": "Odette", "qiqi": "Qiqi",
 }
 _JUNK = {
     "hoyoverse", "mihoyo", "kurogames", "instagram", "insta", "fyp", "viral",
     "explore", "anime", "game", "gaming", "waifu", "official", "livestream",
-    "wuwalivestream", "wuwapc", "wuwa", "genshin", "gi", "honkai", "zzz", "hsr",
     "art", "leak", "news", "clip", "demo", "event", "guide", "birthday", "follow", "like",
-    "genshinimpact", "wutheringwaves", "honkaistarrail", "zenlesszonezero", "honkaiimpact",
-    "redeemcode", "redeem_code", "wuwaspecialbroadcast", "genshinleaks", "wuwaleaks",
 }
 
 
@@ -192,9 +172,45 @@ def _nk(tag: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (tag or "").lstrip("#").lower())
 
 
-def shape_hub_caption(raw: str, topic_mode: str = "auto", aliases: dict | None = None) -> str:
-    """قالب Hub: تیتر + Via + حداکثر ۳ هشتگ (موضوع، بازی، یک کاراکتر)."""
-    als = {**_CHAR_ALIASES, **(aliases or {})}
+def match_pack(text: str, items) -> str:
+    compact = _nk(text)
+    best, best_len = "", 0
+    for it in items or []:
+        if isinstance(it, str):
+            tag, keys = it, [_nk(it)]
+        else:
+            tag = str(it.get("tag") or it.get("name") or "").lstrip("#")
+            keys = [_nk(tag), *(_nk(k) for k in (it.get("keys") or it.get("aliases") or []))]
+        for k in keys:
+            if len(k) < 3 or k in _JUNK:
+                continue
+            if k in compact and len(k) > best_len:
+                best, best_len = tag, len(k)
+    return best
+
+
+def _detect_topic(text: str, mode: str) -> str:
+    others = [n for n in _TOPIC_ORDER if n != "Leak" and _TOPIC_RE.get(n) and _TOPIC_RE[n].search(text)]
+    if mode == "official":
+        return others[0] if others else "News"
+    if others:
+        return others[0]
+    if re.search(r"#leak\b", text, re.I) or re.search(r"\b(leaked|datamine[ds]?)\b", text, re.I):
+        return "Leak"
+    credit = re.search(r"(?:^|\n)via\s+(?!official\b)[A-Za-z]{2,}", text, re.I | re.M) or re.search(
+        r"(?:^|\n)source:\s*(?!official\b|wuthering waves official)", text, re.I | re.M
+    )
+    if mode == "leak" and credit:
+        return "Leak"
+    return ""
+
+
+def shape_hub_caption(raw: str, topic_mode: str = "auto", pack: dict | None = None, aliases: dict | None = None) -> str:
+    """قالب Hub: تیتر + Via + هشتگ‌های مجموعه کانال (موضوع، بازی، یک اسم)."""
+    pack = pack or {}
+    names = list(pack.get("names") or [])
+    if aliases:
+        names.extend({"tag": v, "keys": [k]} for k, v in aliases.items())
     text = re.sub(r"^✦.*$", "", str(raw or ""), flags=re.M)
     text = re.sub(r"^↠.*$", "", text, flags=re.M)
     text = re.sub(r"follow us for more[^\n]*", "", text, flags=re.I)
@@ -211,33 +227,9 @@ def shape_hub_caption(raw: str, topic_mode: str = "auto", aliases: dict | None =
     title = body[0] if body else ""
     rest = body[1:]
     blob = f"{title}\n{chr(10).join(rest)}\n{chr(10).join(via)}\n" + " ".join(f"#{t}" for t in tags)
-    game = next((n for n, rx in _GAMES if rx.search(blob)), "")
-    found = [n for n in _TOPIC_ORDER if _TOPIC_RE[n].search(blob)]
-    hit = found[0] if found else ""
-    mode = topic_mode or "auto"
-    if mode == "official":
-        topic = next((t for t in found if t != "Leak"), "") or "News"
-    elif mode == "leak":
-        topic = hit if hit and hit not in ("Leak", "News") else ("News" if hit == "News" else "Leak")
-    else:
-        topic = hit
-    char = ""
-    for t in tags:
-        key = _nk(t)
-        if key in _JUNK:
-            continue
-        if als.get(key):
-            char = als[key]
-            break
-        pretty = t
-        if len(pretty) > 22:
-            parts = re.findall(r"[A-Z][a-z]{2,}", pretty)
-            char = als.get(_nk(parts[0]), parts[0]) if parts else ""
-            if char:
-                break
-        elif re.match(r"^[A-Z][A-Za-z]{2,21}$", pretty):
-            char = pretty
-            break
+    game = match_pack(blob, pack.get("games") or [])
+    topic = _detect_topic(blob, topic_mode or "auto")
+    char = match_pack(f"{title}\n{' '.join(tags)}", names)
     out_tags = []
     if topic:
         out_tags.append(f"#{topic}")
@@ -266,6 +258,7 @@ def build_caption(original: str, only_tags: bool = False, rules: dict | None = N
         body = shape_hub_caption(
             original or "",
             topic_mode=str((rules or {}).get("topic_mode") or "auto"),
+            pack=cfg.get("hub_tags") if isinstance(cfg.get("hub_tags"), dict) else {},
             aliases=cfg.get("hub_aliases") if isinstance(cfg.get("hub_aliases"), dict) else None,
         )
         suffix = _FOOTER

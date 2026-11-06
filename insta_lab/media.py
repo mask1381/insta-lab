@@ -87,9 +87,16 @@ def convert_webp_to_jpg(webp_path: str) -> str:
 
 
 def crop_bottom_pct(path: str, pct: float) -> str:
-    """برش پایین عکس. pct می‌تواند ۰٫۱ یا ۱۰ (درصد) باشد. ویدیو را دست نمی‌زند."""
+    return crop_image(path, "bottom", pct)
+
+
+def crop_image(path: str, side: str, pct: float) -> str:
+    """برش بالا/پایین/هر دو روی عکس. ویدیو را دست نمی‌زند."""
     from insta_lab.mp4 import crop_frac
-    frac = crop_frac(pct)
+    side = (side or "bottom").lower()
+    if side in ("none", "off", ""):
+        return path
+    frac = crop_frac(pct, 0.22 if side == "both" else 0.40)
     if frac <= 0:
         return path
     if str(path).lower().endswith((".mp4", ".mov", ".webm", ".m4v")):
@@ -97,9 +104,11 @@ def crop_bottom_pct(path: str, pct: float) -> str:
     try:
         with Image.open(path) as img:
             w, h = img.size
-            keep = int(h * (1 - frac))
-            if keep >= 1:
-                img.crop((0, 0, w, keep)).save(path, "JPEG", quality=90)
+            top = int(h * frac) if side in ("top", "both") else 0
+            bot = int(h * frac) if side in ("bottom", "both") else 0
+            if top + bot >= h - 2:
+                return path
+            img.crop((0, top, w, h - bot)).save(path, "JPEG", quality=90)
         return path
     except Exception:
         return path
