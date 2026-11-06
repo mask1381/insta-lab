@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import re
+import unicodedata
 
 from insta_lab import config
 
@@ -302,6 +303,218 @@ def wrap_quote(text: str, mode: str) -> str:
     return inner
 
 
+_CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]")
+_LATIN_TAG_RE = re.compile(r"[A-Za-z0-9_\u00C0-\u024F]+")
+_PROFILE_KEYS = (
+    "nfkc", "split_title", "raw_caption", "drop_text", "own_hashtags",
+    "keep_lines", "strip_blocks", "strip_label", "tags_from_field", "result_field",
+    "hashtag_fallback", "fallback_hashtag", "extra_hashtags", "blocked_hashtags",
+    "blocked_patterns", "fixed_caption", "text_replace", "hashtag_mode", "max_hashtags",
+)
+
+
+def skip_caption_reason(raw: str, rules: dict | None = None) -> str:
+    r = rules or {}
+    text = str(raw or "")
+    if r.get("nfkc"):
+        text = unicodedata.normalize("NFKC", text)
+    for pat in r.get("skip_if_caption_matches") or []:
+        if not pat:
+            continue
+        try:
+            m = re.search(str(pat), text, re.I | re.M)
+        except re.error:
+            m = None
+        if m:
+            return "caption_match"
+    if r.get("skip_if_all_cjk"):
+        plain = re.sub(r"#\w+|@[\w.]+|https?://\S+", " ", text)
+        if _CJK_RE.search(plain) and not re.search(r"[A-Za-z]{2,}", plain):
+            return "cjk"
+    if r.get("skip_if_ad") and is_ad_text(text):
+        return "ad"
+    return ""
+
+
+def _to_hashtag(name: str) -> str:
+    t = re.sub(r"[^A-Za-z0-9]", "", unicodedata.normalize("NFKD", name or ""))
+    return t[:40] if len(t) >= 2 else ""
+
+
+def _latin_tag(h: str) -> str:
+    m = _LATIN_TAG_RE.match((h or "").lstrip("#"))
+    tag = m.group(0) if m else ""
+    return tag if len(tag) >= 2 else ""
+
+
+def _blocked_tag(tag: str, rules: dict) -> bool:
+    key = re.sub(r"[^0-9a-z]", "", (tag or "").lstrip("#").lower())
+    blocked = {str(b).lstrip("#").lower().replace("_", "") for b in (rules.get("blocked_hashtags") or [])}
+    if key in blocked:
+        return True
+    for pat in rules.get("blocked_patterns") or []:
+        if not pat:
+            continue
+        try:
+            if re.search(str(pat), key, re.I):
+                return True
+        except re.error:
+            continue
+    return False
+
+
+def _filter_tags(tags, rules: dict) -> list[str]:
+    out, seen = [], set()
+    for t in tags or []:
+        tag = _latin_tag(str(t))
+        key = tag.lower()
+        if not key or key in seen or _blocked_tag(tag, rules):
+            continue
+        seen.add(key)
+        out.append("#" + tag)
+    for h in rules.get("extra_hashtags") or []:
+        tag = _latin_tag(str(h)) or re.sub(r"[^A-Za-z0-9]", "", str(h).lstrip("#"))
+        key = tag.lower()
+        if tag and key not in seen:
+            seen.add(key)
+            out.append("#" + tag)
+    capn = rules.get("max_hashtags")
+    try:
+        capn = int(capn)
+    except (TypeError, ValueError):
+        capn = 0
+    if capn and capn > 0:
+        out = out[:capn]
+    return out
+
+
+def _strip_end_tags(text: str) -> str:
+    lines = []
+    trail = re.compile(r"(?:[ \t]*#[^\s#]+)+[ \t]*$")
+    for line in (text or "").split("\n"):
+        head = trail.sub("", line)
+        head = re.sub(r"#[^\s#]+", lambda m: m.group(0)[1:], head)
+        lines.append(head)
+    t = "\n".join(lines)
+    t = re.sub(r"[ \t]+\n", "\n", t)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
+
+
+def _drop_block_lines(text: str, patterns) -> str:
+    regs = []
+    for p in patterns or []:
+        try:
+            regs.append(re.compile(str(p), re.I | re.M))
+        except re.error:
+            continue
+    if not regs:
+        return text
+    kept = []
+    for ln in (text or "").splitlines():
+        if any(r.search(ln) for r in regs):
+            continue
+        kept.append(ln)
+    return "\n".join(kept).strip()
+
+
+def _keep_only_lines(text: str, patterns) -> str:
+    regs = []
+    for p in patterns or []:
+        try:
+            regs.append(re.compile(str(p), re.I))
+        except re.error:
+            continue
+    if not regs:
+        return text
+    return "\n".join(ln.strip() for ln in (text or "").splitlines() if any(r.search(ln) for r in regs))
+
+
+def profile_parts(raw: str, rules: dict | None = None, pack: dict | None = None) -> dict:
+    r = rules or {}
+    text = str(raw or "")
+    if r.get("nfkc"):
+        text = unicodedata.normalize("NFKC", text)
+    for pair in r.get("text_replace") or []:
+        if not isinstance(pair, (list, tuple)) or len(pair) < 2:
+            continue
+        try:
+            text = re.sub(str(pair[0]), str(pair[1]), text, flags=re.I | re.M)
+        except re.error:
+            continue
+    title = body = result = ""
+    tags: list[str] = []
+    fixed = str(r.get("fixed_caption") or "").strip()
+    if r.get("drop_text"):
+        pass
+    elif fixed:
+        toks = fixed.split()
+        if toks and all(t.startswith("#") for t in toks):
+            tags = list(toks)
+        else:
+            body = fixed
+    elif r.get("raw_caption"):
+        body = _strip_end_tags(text)
+    else:
+        body = _apply_strip(_drop_block_lines(text, r.get("strip_blocks")), [])
+        if r.get("keep_lines"):
+            body = _keep_only_lines(body, r.get("keep_lines"))
+        body = _strip_end_tags(body)
+        split_on = r.get("split_title")
+        if split_on is None:
+            split_on = True
+        if split_on and body:
+            lines = [l.strip() for l in body.splitlines() if l.strip()]
+            if lines:
+                title, body = lines[0], "\n".join(lines[1:]).strip()
+        if body and r.get("strip_label"):
+            try:
+                body = re.sub(str(r["strip_label"]), "", body, count=1, flags=re.I).strip()
+            except re.error:
+                pass
+        if r.get("result_field"):
+            try:
+                rf = re.compile(str(r["result_field"]), re.I)
+                keep, hit = [], ""
+                for ln in body.splitlines():
+                    if rf.search(ln) and not hit:
+                        hit = ln.strip()
+                    else:
+                        keep.append(ln)
+                result, body = hit, "\n".join(keep).strip()
+            except re.error:
+                pass
+    own = r.get("own_hashtags") or r.get("raw_caption") or r.get("hashtag_mode") in ("own", "raw")
+    if own:
+        tags = _filter_tags(extract_hashtags(text), r)
+    if not tags and r.get("tags_from_field"):
+        try:
+            m = re.search(str(r["tags_from_field"]), text, re.I | re.M)
+        except re.error:
+            m = None
+        if m:
+            h = _to_hashtag(m.group(1))
+            if h:
+                tags = _filter_tags(["#" + h], r) or ["#" + h]
+    if not tags and r.get("hashtag_fallback") in ("pack", "dictionary"):
+        blob = f"{title}\n{body}\n{text}"
+        game = match_pack(blob, (pack or {}).get("games") or [])
+        char = match_pack(f"{title}\n{text}", (pack or {}).get("names") or [])
+        tags = _filter_tags([f"#{x}" for x in (game, char) if x], r)
+    if not tags and r.get("fallback_hashtag"):
+        tags = ["#" + str(r["fallback_hashtag"]).lstrip("#")]
+    tags = _filter_tags(tags, r) or tags
+    return {"title": title, "body": body, "result": result, "hashtags": tags}
+
+
+def uses_profile_caption(rules: dict | None, cfg: dict | None) -> bool:
+    r = rules or {}
+    c = cfg or {}
+    if c.get("nexus_policy") or c.get("profile_caption"):
+        return True
+    return any(r.get(k) for k in _PROFILE_KEYS)
+
+
 def style_result(text: str, mode: str) -> str:
     t = (text or "").strip()
     if not t:
@@ -318,13 +531,16 @@ def build_caption(original: str, only_tags: bool = False, rules: dict | None = N
     limit = config.MAX_TG_CAPTION_LEN
     cfg = _CFG if isinstance(_CFG, dict) else {}
     layout = [x for x in (cfg.get("layout") or []) if isinstance(x, str)]
+    rules = rules or {}
+    profiled = uses_profile_caption(rules, cfg) and not only_tags
 
-    if only_tags or (not layout and not cfg.get("hub_policy")):
+    if only_tags or (not layout and not cfg.get("hub_policy") and not profiled):
         suffix = _FOOTER
         if _BRAND_TAG:
             suffix = ("#" + _BRAND_TAG) + (("\n\n" + suffix) if suffix else "")
         if only_tags:
-            body = " ".join(extract_hashtags(original))
+            hp = profile_parts(original or "", rules, cfg.get("hub_tags") if isinstance(cfg.get("hub_tags"), dict) else {})
+            body = " ".join(hp.get("hashtags") or extract_hashtags(original))
         else:
             body = (original or "").strip()
         if _has_footer(body, _FOOTER):
@@ -351,6 +567,16 @@ def build_caption(original: str, only_tags: bool = False, rules: dict | None = N
         parts = {"title": hp["title"], "body": hp["body"], "result": hp["result"], "hashtags": hp["hashtags"]}
         if not layout:
             layout = ["title", "body", "result", "hashtags", "footer"]
+    elif profiled:
+        hp = profile_parts(
+            original or "",
+            rules,
+            cfg.get("hub_tags") if isinstance(cfg.get("hub_tags"), dict) else {},
+        )
+        parts = {"title": hp["title"], "body": hp["body"], "result": hp["result"], "hashtags": hp["hashtags"]}
+        if not layout:
+            layout = ["title", "body", "result", "hashtags", "footer"]
+    policy = hub or profiled
     tags_mode = cfg.get("tags") or "keep"
     if tags_mode in ("extract", "drop"):
         parts["title"] = _strip_tags(parts["title"])
@@ -369,7 +595,7 @@ def build_caption(original: str, only_tags: bool = False, rules: dict | None = N
     tpl = cfg.get("templates") if isinstance(cfg.get("templates"), dict) else {}
     extras = cfg.get("extras") if isinstance(cfg.get("extras"), dict) else {}
 
-    if essay_len < short_min and short_mode == "as_is" and not hub:
+    if essay_len < short_min and short_mode == "as_is" and not policy:
         suffix_bits = []
         if "brand" in layout and brand:
             suffix_bits.append("#" + brand)
@@ -379,7 +605,7 @@ def build_caption(original: str, only_tags: bool = False, rules: dict | None = N
         text = sep.join([x for x in (cleaned, attached) if x])
         return text[:limit]
 
-    if essay_len < short_min and not hub:
+    if essay_len < short_min and not policy:
         if short_mode == "title_only":
             use_layout = [x for x in ("title", "hashtags", "brand", "footer") if x in layout or x in ("title", "hashtags")]
         elif short_mode == "tags_only":

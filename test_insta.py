@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from insta_lab import caption, config
 from insta_lab.sender import split_balanced
-from insta_lab.insta import evaluate, prepare
+from insta_lab.insta import evaluate, prepare, apply_media_drops
 from scripts.process_batch import post_key
 
 failures = []
@@ -94,20 +94,6 @@ def test_caption_layout_and_ads():
     caption.set_caption_cfg({})
     caption.set_footer("")
     print("test_caption_layout_and_ads OK")
-
-
-def test_materialize_unpack():
-    packed_list = ["a.jpg"]
-    files = packed_list[0] if isinstance(packed_list, tuple) else packed_list
-    if isinstance(files, (str, bytes)):
-        files = [files]
-    assert files == ["a.jpg"]
-    packed_tuple = (["a.jpg", "b.jpg"], "/tmp")
-    files = packed_tuple[0] if isinstance(packed_tuple, tuple) else packed_tuple
-    if isinstance(files, (str, bytes)):
-        files = [files]
-    assert files == ["a.jpg", "b.jpg"]
-    print("test_materialize_unpack OK")
 
 
 def test_crop_skips_video():
@@ -223,15 +209,52 @@ def test_env_config():
     print("test_env_config OK")
 
 
+def test_nexus_profile():
+    caption.set_footer("THE LABS")
+    caption.set_caption_cfg({
+        "nexus_policy": True,
+        "layout": ["title", "body", "result", "hashtags", "footer"],
+        "title_font": "bold",
+        "body_quote": "expand",
+        "result_style": "italic",
+        "joiner": "nlnl",
+        "tags": "extract",
+    })
+    rules = {
+        "nfkc": True,
+        "split_title": True,
+        "tags_from_field": r"^[ \t]*anime[ \t]*:[ \t]*(.+)$",
+        "result_field": r"^[ \t]*song[ \t]*:",
+        "skip_if_all_cjk": True,
+        "skip_if_caption_matches": [r"BEST ANIME TO WATCH FOR BEGINNERS"],
+    }
+    raw = "Peak Romance anime moment\nPlot: Kyoko Hori is perfect.\nAnime: Horimiya\nSong: Winter Wonderland\n#RomanceAnime #AnimeCouple"
+    out = caption.build_caption(raw, rules=rules)
+    assert "<b>Peak Romance anime moment</b>" in out, out
+    assert "<blockquote expandable>" in out and "Kyoko Hori" in out, out
+    assert "<i>Song: Winter Wonderland</i>" in out, out
+    assert "#Horimiya" in out and "#RomanceAnime" not in out, out
+    assert "THE LABS" in out
+    jp = "日本語だけのキャプション です"
+    assert evaluate({"caption": jp, "media_items": [{"url": "u", "type": "photo"}]}, rules)["skip"] == "cjk"
+    spam = "BEST ANIME TO WATCH FOR BEGINNERS\nTVアニメ"
+    assert evaluate({"caption": spam, "media_items": [{"url": "u", "type": "photo"}]}, rules)["skip"] == "caption_match"
+    items = apply_media_drops([{"u": 1}, {"u": 2}, {"u": 3}, {"u": 4}], {"drop_first": 1, "drop_last": 1})
+    assert [x["u"] for x in items] == [2, 3]
+    caption.set_caption_cfg({})
+    caption.set_footer("")
+    print("test_nexus_profile OK")
+
+
 if __name__ == "__main__":
     test_caption()
     test_caption_layout_and_ads()
     test_split_balanced()
     test_evaluate()
     test_post_key()
-    test_materialize_unpack()
     test_crop_skips_video()
     test_hub_shape()
+    test_nexus_profile()
     test_prepare_video_ffmpeg()
     test_env_config()
     print()

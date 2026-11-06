@@ -19,6 +19,19 @@ from insta_lab import caption as cap
 from insta_lab import media
 
 
+def apply_media_drops(items: list, rules: dict | None = None) -> list:
+    r = rules or {}
+    first = max(0, int(r.get("drop_first") or 0))
+    last = max(0, int(r.get("drop_last") or 0))
+    n = len(items or [])
+    if n <= 1 or first + last <= 0:
+        return list(items or [])
+    if n - first - last < 1:
+        return list(items or [])
+    end = n - last if last else n
+    return list(items)[first:end]
+
+
 def evaluate(post: dict, rules: dict | None = None) -> dict:
     """پست را ارزیابی می‌کند → {"ready": bool, "skip": str|None, "caption": str|None, ...}"""
     r = rules or {}
@@ -28,6 +41,9 @@ def evaluate(post: dict, rules: dict | None = None) -> dict:
     has_video = any((i.get("type") or "").lower() == "video" for i in media_items)
     if has_video and bool(r.get("skip_video")):
         return {"ready": False, "skip": "video"}
+    why = cap.skip_caption_reason(post.get("caption") or "", r)
+    if why:
+        return {"ready": False, "skip": why}
     return {"ready": True}
 
 
@@ -51,7 +67,7 @@ def _num(v, lo=0, hi=60, default=0):
 def materialize(post: dict, rules: dict | None = None, workdir: str = "") -> list:
     """دانلود + کراپ عکس + آماده‌سازی ویدیو (صدا / برش زمانی / کراپ پایین)."""
     r = rules or {}
-    media_items = list(post.get("media_items") or [])
+    media_items = apply_media_drops(list(post.get("media_items") or []), r)
     files, workdir = media.download_media_direct(media_items, workdir)
     from insta_lab.mp4 import prepare_video
 
