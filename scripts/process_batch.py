@@ -152,45 +152,54 @@ def make_when(now, idx, gap_min):
     return now + __import__("datetime").timedelta(minutes=gap_min * (idx + 1))
 
 
-def rules_for(batch: dict, post: dict) -> dict:
-    """قواعد موتور < پروفایل پیج < قواعد خود پست."""
-    r = dict(batch.get("post_rules") or {})
-    profs = batch.get("profiles") or {}
-    name = post.get("profile")
-    if name and isinstance(profs.get(name), dict):
-        p = profs[name]
-        for k in ("skip_video", "only_tags", "crop_bottom_pct", "drop_first", "drop_last"):
-            if p.get(k) is not None:
-                r[k] = p[k]
-    pr = post.get("rules")
-    if isinstance(pr, dict):
-        for k, v in pr.items():
-            if v is not None:
-                r[k] = v
-    return r
+def parse_when(raw, fallback=None):
+    if raw is None or raw == "":
+        return fallback
+    if isinstance(raw, datetime):
+        dt = raw
+    else:
+        s = str(raw).strip().replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(s)
+        except ValueError:
+            return fallback
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def merge_rules(batch_rules, post) -> dict:
+    out = dict(batch_rules or {})
+    extra = post.get("rules") if isinstance(post.get("rules"), dict) else {}
+    out.update(extra)
+    return out
 
 
 def send_one(post, rules, target, when, workdir) -> tuple:
     """یک پست = ارزیابی + دانلود + ارسال. -> (status, code, real_when)."""
     from insta_lab.insta import evaluate, materialize
     from insta_lab.sender import schedule_send
+    from insta_lab.caption import build_caption, is_ad_text
 
     check = evaluate(post, rules)
     if not check["ready"]:
         return ("skipped", check.get("skip", "-"), None)
+    if is_ad_text(post.get("caption") or ""):
+        return ("skipped", "ad", None)
 
-    from insta_lab.caption import build_caption
     caption = build_caption(post.get("caption") or "", only_tags=bool((rules or {}).get("only_tags")))
 
-    packed = materialize(post, rules, workdir)
-    # materialize لیست فایل برمی‌گرداند؛ تست‌ها گاهی (files, workdir) می‌دهند
-    files = packed[0] if isinstance(packed, tuple) else packed
+    files, _wd = materialize(post, rules, workdir)
     if not files:
         return ("skipped", "no_media", None)
-    if isinstance(files, (str, bytes)):
-        files = [files]
 
-    ids = schedule_send(target, files, caption, when)
+    try:
+        ids = schedule_send(target, files, caption, when)
+    except Exception as e:
+        name = type(e).__name__
+        if name == "TypeNotFoundError":
+            return ("sent", "schema", when)
+        return ("failed", name[:40], when)
     if not ids:
         return ("failed", "send", None)
     return ("sent", "-", when)
@@ -210,6 +219,7 @@ def run(batch: dict, sink: AckSink) -> int:
     dry_run = bool(batch.get("dry"))
     target = ref["target_chat_id"]
     posts = batch.get("posts") or []
+    rules = batch.get("post_rules") or {}
     send = batch.get("send") if isinstance(batch.get("send"), dict) else {}
     gap_min = int(send.get("gap_min") or batch.get("schedule_gap_min") or 0)
 
@@ -226,9 +236,9 @@ def run(batch: dict, sink: AckSink) -> int:
     try:
         for idx, post in enumerate(posts):
             pos_idx = post.get("idx", idx)
-            # dedup: shortcode قبلاً فرستاده‌شده = ردِ بی‌صدا (force از ارسال دستی رد می‌کند)
+            # dedup: shortcode قبلاً فرستاده‌شده = ردِ بی‌صدا
             key = post_key(post)
-            if key and key in sent and not batch.get("force") and not post.get("force"):
+            if key and key in sent:
                 sink.ack(pos_idx, "skipped", "duplicate", "-")
                 continue
 
@@ -240,21 +250,9 @@ def run(batch: dict, sink: AckSink) -> int:
                     sink.ack(pos_idx, "skipped", check.get("skip"), "-")
                 continue
 
-            when = None
-            if post.get("when"):
-                try:
-                    when = datetime.fromisoformat(str(post["when"]).replace("Z", "+00:00"))
-                    if when.tzinfo is None:
-                        when = when.replace(tzinfo=timezone.utc)
-                except Exception:
-                    when = make_when(now, idx, gap_min)
-            else:
-                when = make_when(now, idx, gap_min)
-            try:
-                status, code, real_when = send_one(post, rules_for(batch, post), target, when, workdir)
-            except Exception as e:
-                log(f"post {pos_idx} crashed: {type(e).__name__}: {e}")
-                status, code, real_when = "failed", type(e).__name__[:40], None
+            when = parse_when(post.get("when"), make_when(now, idx, gap_min))
+            post_dir = tempfile.mkdtemp(prefix=f"p{pos_idx}_", dir=workdir)
+            status, code, real_when = send_one(post, merge_rules(rules, post), target, when, post_dir)
             sink.ack(pos_idx, status, code, fmt_when(real_when))
             time.sleep(SEND_GAP_SECONDS if status == "sent" else 0.2)
             if status == "sent" and key:

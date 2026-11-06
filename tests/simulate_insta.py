@@ -98,6 +98,7 @@ def t_evaluate_video_allowed():
 def t_caption_basic():
     print("[4] caption: build_caption passthrough")
     import insta_lab.caption as cap
+    cap.set_caption_cfg({})
     cap.set_footer("")
     cap.set_brand_tag("")
     result = cap.build_caption("Hello #anime #art world")

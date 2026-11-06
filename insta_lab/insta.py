@@ -19,31 +19,10 @@ from insta_lab import caption as cap
 from insta_lab import media
 
 
-def slice_media(post: dict, rules: dict | None = None) -> list:
-    """اسلایدهای این پیج: drop_first / drop_last از قواعد پیج."""
-    items = list(post.get("media_items") or [])
-    r = rules or {}
-    try:
-        df = max(0, int(r.get("drop_first") or 0))
-    except (TypeError, ValueError):
-        df = 0
-    try:
-        dl = max(0, int(r.get("drop_last") or 0))
-    except (TypeError, ValueError):
-        dl = 0
-    if df:
-        items = items[df:]
-    if dl and len(items) > dl:
-        items = items[:-dl]
-    return items
-
-
 def evaluate(post: dict, rules: dict | None = None) -> dict:
     """پست را ارزیابی می‌کند → {"ready": bool, "skip": str|None, "caption": str|None, ...}"""
     r = rules or {}
-    if cap.is_ad(post.get("caption") or ""):
-        return {"ready": False, "skip": "ad"}
-    media_items = slice_media(post, r)
+    media_items = list(post.get("media_items") or [])
     if not media_items:
         return {"ready": False, "skip": "no_media"}
     has_video = any((i.get("type") or "").lower() == "video" for i in media_items)
@@ -64,9 +43,11 @@ def prepare(post: dict, rules: dict | None = None) -> dict:
 def materialize(post: dict, rules: dict | None = None, workdir: str = "") -> list:
     """دانلود + پردازش رسانه‌ها. خروجی: لیست مسیر فایل‌ها."""
     r = rules or {}
-    media_items = slice_media(post, r)
+    media_items = list(post.get("media_items") or [])
     files, workdir = media.download_media_direct(media_items, workdir)
     pct = r.get("crop_bottom_pct")
     if pct:
         files = [media.crop_bottom_pct(f, float(pct)) for f in files]
+    from insta_lab.mp4 import normalize_video
+    files = [normalize_video(f) if str(f).lower().endswith(".mp4") else f for f in files]
     return files

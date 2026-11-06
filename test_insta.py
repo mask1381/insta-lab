@@ -21,6 +21,7 @@ def check(name, cond, detail=""):
 
 
 def test_caption():
+    caption.set_caption_cfg({})
     caption.set_footer("")
     caption.set_brand_tag("")
     out = caption.build_caption("hello #art #good")
@@ -68,6 +69,39 @@ def test_post_key():
     print("test_post_key OK")
 
 
+def test_caption_layout_and_ads():
+    caption.set_brand_tag("")
+    caption.set_footer("TREE")
+    caption.set_caption_cfg({
+        "layout": ["title", "body", "result", "hashtags", "brand", "footer"],
+        "short_layout": ["title", "hashtags", "footer"],
+        "short_mode": "as_is",
+        "short_min": 80,
+        "split": "lines",
+        "tags": "keep",
+        "joiner": "nlnl",
+        "templates": {"title": "<b>{title}</b>", "body": "{body}", "result": "<i>{result}</i>", "hashtags": "{hashtags}"},
+        "extras": {},
+        "ad_detect": {"enabled": True, "patterns": ["giveaway", "buy now"]},
+        "strip": [],
+    })
+    short = caption.build_caption("OH MY GOD\n\n#WutheringWaves")
+    assert "OH MY GOD" in short and "TREE" in short and "#WutheringWaves" in short
+    long = caption.build_caption("Lily is cute\n\nA long essay about the livestream that goes on and on about Shorekeeper and the community reaction to the story.\n\n#WutheringWaves")
+    assert "<b>Lily is cute</b>" in long
+    assert caption.is_ad_text("Create a stage for a chance to win giveaway tickets")
+    assert not caption.is_ad_text("3.8 BANNERS\n\n#WutheringWaves")
+    caption.set_caption_cfg({})
+    caption.set_footer("")
+    print("test_caption_layout_and_ads OK")
+
+
+def test_crop_skips_video():
+    from insta_lab.media import crop_bottom_pct
+    assert crop_bottom_pct("x.mp4", 0.2) == "x.mp4"
+    print("test_crop_skips_video OK")
+
+
 def test_env_config():
     config.env_config({
         "branch": "Chan", "target_chat_id": "123",
@@ -81,9 +115,11 @@ def test_env_config():
 
 if __name__ == "__main__":
     test_caption()
+    test_caption_layout_and_ads()
     test_split_balanced()
     test_evaluate()
     test_post_key()
+    test_crop_skips_video()
     test_env_config()
     print()
     print("ALL TESTS PASSED") if not failures else print(f"{len(failures)} FAILURE(S): {failures}")

@@ -87,16 +87,10 @@ def convert_webp_to_jpg(webp_path: str) -> str:
 
 
 def crop_bottom_pct(path: str, pct: float) -> str:
-    """برش پایین عکس. pct می‌تواند ۰–۱ یا درصد ۰–۴۰ باشد (بات درصد می‌فرستد)."""
-    if pct is None:
+    """برشِ پایین عکس به اندازه‌ی pct (۰ تا ۱) — اختیاری، از batch/پروفایل. ویدیو را دست نمی‌زند."""
+    if pct is None or pct <= 0 or pct >= 1:
         return path
-    try:
-        pct = float(pct)
-    except (TypeError, ValueError):
-        return path
-    if pct > 1:
-        pct = pct / 100.0
-    if pct <= 0 or pct >= 1:
+    if str(path).lower().endswith((".mp4", ".mov", ".webm")):
         return path
     try:
         with Image.open(path) as img:
@@ -129,7 +123,7 @@ def download_media_direct(media_items: list, workdir: str = "") -> tuple:
             failures += 1
             continue
         ext = ".mp4" if mtype == "video" else guess_ext(url)
-        dest = os.path.join(workdir, f"ig_{idx}{ext}")
+        dest = os.path.join(workdir, f"ig_{idx}_{os.urandom(3).hex()}{ext}")
         try:
             _download_binary(session, url, dest)
             files.append(dest)

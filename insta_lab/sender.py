@@ -15,6 +15,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from insta_lab import config
+from insta_lab.mp4 import video_meta
 
 
 def _utc(when: datetime) -> datetime:
@@ -48,14 +49,28 @@ def _is_media(fp: str) -> bool:
     return fp.lower().endswith((".jpg", ".jpeg", ".png", ".mp4"))
 
 
+def _video_kwargs(path: str) -> dict:
+    if not str(path).lower().endswith(".mp4"):
+        return {}
+    from telethon.tl.types import DocumentAttributeVideo
+    meta = video_meta(path)
+    w = max(2, int(meta.get("w") or 1280))
+    h = max(2, int(meta.get("h") or 720))
+    dur = int(max(1, round(float(meta.get("duration") or 1))))
+    return {
+        "supports_streaming": True,
+        "attributes": [DocumentAttributeVideo(duration=dur, w=w, h=h, supports_streaming=True)],
+    }
+
+
 async def _send(client, entity, files, caption, when):
     """ارسال یک آلبوم (<10) یا تک‌فایل؛ با caption روی پیام اول و schedule اختیاری."""
+    at = _utc(when) if when else None
+    extra = _video_kwargs(files[0]) if len(files) == 1 else {"supports_streaming": True}
     if len(files) > 1:
         caps = [caption] + [""] * (len(files) - 1)
-        return await client.send_file(entity, files, caption=caps, parse_mode="html",
-                                      schedule=_utc(when) if when else None, supports_streaming=True)
-    return await client.send_file(entity, files[0], caption=caption, parse_mode="html",
-                                  schedule=_utc(when) if when else None, supports_streaming=True)
+        return await client.send_file(entity, files, caption=caps, parse_mode="html", schedule=at, **extra)
+    return await client.send_file(entity, files[0], caption=caption, parse_mode="html", schedule=at, **extra)
 
 
 async def _send_scheduled(chat_id, files, caption, when) -> list[int]:
@@ -84,14 +99,21 @@ async def _send_scheduled(chat_id, files, caption, when) -> list[int]:
         for i, batch_files in enumerate(albums):
             if i > 0:
                 await asyncio.sleep(config.PAUSE_BETWEEN)
+            at = when + timedelta(minutes=i) if when else None
             try:
-                res = await _send(client, entity, batch_files, caption,
-                                  when + timedelta(minutes=i) if when else None)
+                res = await _send(client, entity, batch_files, caption, at)
+                ids.extend(_ids(res))
             except FloodWaitError as e:
                 await asyncio.sleep(min(e.seconds + 1, 300))
-                res = await _send(client, entity, batch_files, caption,
-                                  when + timedelta(minutes=i) if when else None)
-            ids.extend(_ids(res))
+                res = await _send(client, entity, batch_files, caption, at)
+                ids.extend(_ids(res))
+            except Exception as e:
+                # schema lag: Telegram often accepted the send; retry would duplicate
+                if type(e).__name__ == "TypeNotFoundError":
+                    if not ids:
+                        ids.append(0)
+                    break
+                raise
         return ids
     finally:
         await client.disconnect()
