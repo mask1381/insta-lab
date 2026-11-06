@@ -67,17 +67,18 @@ def _video_kwargs(path: str) -> dict:
     return {"supports_streaming": True, "attributes": [attr]}
 
 
-async def _send(client, entity, files, caption, when):
+async def _send(client, entity, files, caption, when, parse_mode="html"):
     """ارسال یک آلبوم (<10) یا تک‌فایل؛ با caption روی پیام اول و schedule اختیاری."""
     at = _utc(when) if when else None
+    pm = parse_mode or None
     extra = _video_kwargs(files[0]) if len(files) == 1 else {"supports_streaming": True}
     if len(files) > 1:
         caps = [caption] + [""] * (len(files) - 1)
-        return await client.send_file(entity, files, caption=caps, parse_mode="html", schedule=at, **extra)
-    return await client.send_file(entity, files[0], caption=caption, parse_mode="html", schedule=at, **extra)
+        return await client.send_file(entity, files, caption=caps, parse_mode=pm, schedule=at, **extra)
+    return await client.send_file(entity, files[0], caption=caption, parse_mode=pm, schedule=at, **extra)
 
 
-async def _send_scheduled(chat_id, files, caption, when) -> list[int]:
+async def _send_scheduled(chat_id, files, caption, when, parse_mode="html") -> list[int]:
     from telethon import TelegramClient
     from telethon.sessions import StringSession
     from telethon.errors import FloodWaitError
@@ -105,11 +106,11 @@ async def _send_scheduled(chat_id, files, caption, when) -> list[int]:
                 await asyncio.sleep(config.PAUSE_BETWEEN)
             at = when + timedelta(minutes=i) if when else None
             try:
-                res = await _send(client, entity, batch_files, caption, at)
+                res = await _send(client, entity, batch_files, caption, at, parse_mode)
                 ids.extend(_ids(res))
             except FloodWaitError as e:
                 await asyncio.sleep(min(e.seconds + 1, 300))
-                res = await _send(client, entity, batch_files, caption, at)
+                res = await _send(client, entity, batch_files, caption, at, parse_mode)
                 ids.extend(_ids(res))
             except Exception as e:
                 # schema lag: Telegram often accepted the send; retry would duplicate
@@ -123,8 +124,10 @@ async def _send_scheduled(chat_id, files, caption, when) -> list[int]:
         await client.disconnect()
 
 
-def schedule_send(chat_id: str, files: list, caption: str, when: datetime | None = None) -> list[int]:
+def schedule_send(
+    chat_id: str, files: list, caption: str, when: datetime | None = None, parse_mode="html"
+) -> list[int]:
     """ارسال زمان‌بندی‌شده/فوری. when=None → همین‌الان. برمی‌گرداند message_id ها."""
     if not files:
         return []
-    return asyncio.run(_send_scheduled(chat_id, files, caption, when))
+    return asyncio.run(_send_scheduled(chat_id, files, caption, when, parse_mode))

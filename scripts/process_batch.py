@@ -178,11 +178,30 @@ def merge_rules(batch_rules, post) -> dict:
     return out
 
 
-def send_one(post, rules, target, when, workdir) -> tuple:
+def send_one(post, rules, target, when, workdir, *, personal=False) -> tuple:
     """یک پست = ارزیابی + دانلود + ارسال. -> (status, code, real_when)."""
     from insta_lab.insta import evaluate, materialize
     from insta_lab.sender import schedule_send
     from insta_lab.caption import build_caption, is_ad_text
+
+    if personal:
+        caption = (post.get("caption") or "")[:1024]
+        packed = materialize(post, {}, workdir)
+        files = packed[0] if isinstance(packed, tuple) else packed
+        if not files:
+            return ("skipped", "no_media", None)
+        if isinstance(files, (str, bytes)):
+            files = [files]
+        try:
+            ids = schedule_send(target, files, caption, None, parse_mode=None)
+        except Exception as e:
+            name = type(e).__name__
+            if name == "TypeNotFoundError":
+                return ("sent", "schema", None)
+            return ("failed", name[:40], None)
+        if not ids:
+            return ("failed", "send", None)
+        return ("sent", "-", None)
 
     check = evaluate(post, rules)
     if not check["ready"]:
@@ -223,7 +242,8 @@ def run(batch: dict, sink: AckSink) -> int:
 
     ref = config.env_config(batch)
     dry_run = bool(batch.get("dry"))
-    target = ref["target_chat_id"]
+    personal = bool(batch.get("personal") or batch.get("mode") == "personal")
+    target = "me" if personal else ref["target_chat_id"]
     posts = batch.get("posts") or []
     rules = batch.get("post_rules") or {}
     send = batch.get("send") if isinstance(batch.get("send"), dict) else {}
@@ -244,7 +264,7 @@ def run(batch: dict, sink: AckSink) -> int:
             pos_idx = post.get("idx", idx)
             # dedup: shortcode قبلاً فرستاده‌شده = ردِ بی‌صدا
             key = post_key(post)
-            if key and key in sent:
+            if key and key in sent and not personal:
                 sink.ack(pos_idx, "skipped", "duplicate", "-")
                 continue
 
@@ -256,21 +276,24 @@ def run(batch: dict, sink: AckSink) -> int:
                     sink.ack(pos_idx, "skipped", check.get("skip"), "-")
                 continue
 
-            when = parse_when(post.get("when"), make_when(now, idx, gap_min))
+            when = None if personal else parse_when(post.get("when"), make_when(now, idx, gap_min))
             post_dir = tempfile.mkdtemp(prefix=f"p{pos_idx}_", dir=workdir)
             try:
-                status, code, real_when = send_one(post, merge_rules(rules, post), target, when, post_dir)
+                status, code, real_when = send_one(
+                    post, merge_rules(rules, post), target, when, post_dir, personal=personal
+                )
             except Exception as e:
                 log(f"post {pos_idx} crashed: {type(e).__name__}: {e}")
                 status, code, real_when = "failed", type(e).__name__[:40], None
             sink.ack(pos_idx, status, code, fmt_when(real_when))
             time.sleep(SEND_GAP_SECONDS if status == "sent" else 0.2)
-            if status == "sent" and key:
+            if status == "sent" and key and not personal:
                 sent.add(key)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
-    sent.save()
+    if not personal:
+        sent.save()
     return 0
 
 
