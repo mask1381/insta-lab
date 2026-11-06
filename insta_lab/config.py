@@ -62,6 +62,7 @@ def env_config(batch: dict | None) -> dict:
     from insta_lab import caption
     caption.set_footer(str(batch.get("footer_html") or batch.get("footer") or ""))
     caption.set_brand_tag(str(batch.get("brand_tag") or ""))
+    caption.set_caption_cfg(batch.get("caption") if isinstance(batch.get("caption"), dict) else {})
 
     return {
         "dry": bool(batch.get("dry")),

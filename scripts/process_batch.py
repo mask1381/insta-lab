@@ -159,7 +159,7 @@ def rules_for(batch: dict, post: dict) -> dict:
     name = post.get("profile")
     if name and isinstance(profs.get(name), dict):
         p = profs[name]
-        for k in ("skip_video", "only_tags", "crop_bottom_pct"):
+        for k in ("skip_video", "only_tags", "crop_bottom_pct", "drop_first", "drop_last"):
             if p.get(k) is not None:
                 r[k] = p[k]
     pr = post.get("rules")
