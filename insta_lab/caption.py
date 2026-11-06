@@ -159,14 +159,14 @@ _GAMES = [
 ]
 _TOPIC_ORDER = ["Redeem_Code", "Clip", "Demo", "Guide", "Event", "Art", "News", "Leak"]
 _TOPIC_RE = {
-    "Redeem_Code": re.compile(r"#redeem|#code\b|redeem\s*code", re.I),
+    "Redeem_Code": re.compile(r"#redeem|#code\b|redeem\s*code|\bcodes\b", re.I),
     "Clip": re.compile(r"#clip\b|\bextract\b|\bclip\b", re.I),
     "Demo": re.compile(r"#demo\b|character trailer|official trailer|\bdemo\b", re.I),
     "Guide": re.compile(r"#guide\b|creation guide", re.I),
     "Event": re.compile(r"#event\b|〓event|creator contest|#birthday\b", re.I),
     "Art": re.compile(r"#art\b|wallpaper|download\s*hd", re.I),
     "News": re.compile(r"#news\b|read full article|livestream recap", re.I),
-    "Leak": re.compile(r"#leak\b|(?:^|\n)via\s+[A-Za-z]", re.I | re.M),
+    "Leak": re.compile(r"#leak\b|(?:^|\n)via\s+[A-Za-z]|(?:^|\n)source:\s*(?!wuthering waves official|official\b)", re.I | re.M),
 }
 _CHAR_ALIASES = {
     "anastasyafeodorovnasnezhnaya": "Anastasya", "anastasya": "Anastasya",
@@ -184,7 +184,7 @@ _JUNK = {
     "wuwalivestream", "wuwapc", "wuwa", "genshin", "gi", "honkai", "zzz", "hsr",
     "art", "leak", "news", "clip", "demo", "event", "guide", "birthday", "follow", "like",
     "genshinimpact", "wutheringwaves", "honkaistarrail", "zenlesszonezero", "honkaiimpact",
-    "redeemcode", "redeem_code",
+    "redeemcode", "redeem_code", "wuwaspecialbroadcast", "genshinleaks", "wuwaleaks",
 }
 
 
