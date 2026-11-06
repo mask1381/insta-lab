@@ -51,11 +51,44 @@ def extract_hashtags(caption: str) -> list[str]:
     return re.findall(r"#[\w؀-ۿ]+", caption)
 
 
+def clip_html(html: str, limit: int) -> str:
+    s = str(html or "")
+    if len(s) <= limit:
+        return _close_html(s)
+    s = s[: max(0, limit - 96)]
+    lt, gt = s.rfind("<"), s.rfind(">")
+    if lt > gt:
+        s = s[:lt]
+    amp, semi = s.rfind("&"), s.rfind(";")
+    if amp > semi:
+        s = s[:amp]
+    return _close_html(s)
+
+
+def _close_html(html: str) -> str:
+    open_tags: list[str] = []
+    for m in re.finditer(r"</?([a-z][a-z0-9-]*)\b[^>]*>", html, re.I):
+        name = m.group(1).lower()
+        if name in ("br", "hr", "img"):
+            continue
+        if m.group(0).startswith("</"):
+            for i in range(len(open_tags) - 1, -1, -1):
+                if open_tags[i] == name:
+                    open_tags.pop(i)
+                    break
+        else:
+            open_tags.append(name)
+    out = html
+    while open_tags:
+        out += f"</{open_tags.pop()}>"
+    return out
+
+
 def trim_caption(caption: str, limit: int = None) -> str:
     limit = limit or config.MAX_TG_CAPTION_LEN
     caption = (caption or "").strip()
     if len(caption) > limit:
-        caption = caption[:limit - 1].rstrip() + "…"
+        return clip_html(caption, limit)
     return caption
 
 
@@ -712,4 +745,4 @@ def build_caption(original: str, only_tags: bool = False, rules: dict | None = N
             chunk = footer if footer and not _has_footer("\n".join(blocks), footer) else ""
         if chunk:
             blocks.append(chunk)
-    return sep.join(blocks)[:limit]
+    return clip_html(sep.join(blocks), limit)

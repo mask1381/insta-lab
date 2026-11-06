@@ -20,6 +20,15 @@ def check(name, cond, detail=""):
         failures.append(name)
 
 
+def test_clip_html():
+    raw = "<blockquote>💠 " + "#Tag " * 80 + "end"
+    out = caption.clip_html(raw, 120)
+    assert out.startswith("<blockquote>")
+    assert out.endswith("</blockquote>")
+    assert "<block" not in out[1:] or out.count("<blockquote") == 1
+    print("test_clip_html OK")
+
+
 def test_caption():
     caption.set_caption_cfg({})
     caption.set_footer("")
@@ -276,6 +285,7 @@ def test_nexus_profile():
 
 
 if __name__ == "__main__":
+    test_clip_html()
     test_caption()
     test_caption_layout_and_ads()
     test_split_balanced()
