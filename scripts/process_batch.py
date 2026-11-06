@@ -210,7 +210,8 @@ def run(batch: dict, sink: AckSink) -> int:
     dry_run = bool(batch.get("dry"))
     target = ref["target_chat_id"]
     posts = batch.get("posts") or []
-    gap_min = int(batch.get("schedule_gap_min") or 0)
+    send = batch.get("send") if isinstance(batch.get("send"), dict) else {}
+    gap_min = int(send.get("gap_min") or batch.get("schedule_gap_min") or 0)
 
     if not target:
         raise RuntimeError("target_chat_id در batch ست نشده است")
