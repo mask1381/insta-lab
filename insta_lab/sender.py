@@ -57,10 +57,14 @@ def _video_kwargs(path: str) -> dict:
     w = max(2, int(meta.get("w") or 1280))
     h = max(2, int(meta.get("h") or 720))
     dur = int(max(1, round(float(meta.get("duration") or 1))))
-    return {
-        "supports_streaming": True,
-        "attributes": [DocumentAttributeVideo(duration=dur, w=w, h=h, supports_streaming=True)],
-    }
+    nosound = not bool(meta.get("has_audio"))
+    try:
+        attr = DocumentAttributeVideo(
+            duration=dur, w=w, h=h, supports_streaming=True, nosound=nosound,
+        )
+    except TypeError:
+        attr = DocumentAttributeVideo(duration=dur, w=w, h=h, supports_streaming=True)
+    return {"supports_streaming": True, "attributes": [attr]}
 
 
 async def _send(client, entity, files, caption, when):

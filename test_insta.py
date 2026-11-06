@@ -98,8 +98,53 @@ def test_caption_layout_and_ads():
 
 def test_crop_skips_video():
     from insta_lab.media import crop_bottom_pct
+    from insta_lab.mp4 import crop_frac
     assert crop_bottom_pct("x.mp4", 0.2) == "x.mp4"
+    assert crop_frac(10) == 0.1
+    assert crop_frac(0.2) == 0.2
+    assert crop_frac(0) == 0
     print("test_crop_skips_video OK")
+
+
+def test_prepare_video_ffmpeg():
+    import shutil, subprocess, tempfile
+    from pathlib import Path
+    from insta_lab.mp4 import prepare_video, video_meta, ffmpeg_bin
+    ff = ffmpeg_bin()
+    if not ff:
+        print("test_prepare_video_ffmpeg SKIP (no ffmpeg)")
+        return
+    d = Path(tempfile.mkdtemp())
+    vo = d / "vo.mp4"
+    wa = d / "wa.mp4"
+    au = d / "a.aac"
+    subprocess.check_call([
+        ff, "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10", "-t", "3",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", str(vo),
+    ])
+    subprocess.check_call([
+        ff, "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100", "-t", "3",
+        "-c:a", "aac", str(au),
+    ])
+    subprocess.check_call([
+        ff, "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", "testsrc=size=640x360:rate=10",
+        "-f", "lavfi", "-i", "sine=frequency=330:sample_rate=44100",
+        "-t", "4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+        "-shortest", str(wa),
+    ])
+    silent = Path(prepare_video(str(vo)))
+    muxed = Path(prepare_video(str(vo), audio_path=str(au)))
+    cropped = Path(prepare_video(str(wa), crop_bottom_pct=10, trim_start_sec=0.5, trim_end_sec=0.5))
+    ms, mm, mc = video_meta(str(silent)), video_meta(str(muxed)), video_meta(str(cropped))
+    assert ms.get("has_audio"), ms
+    assert mm.get("has_audio"), mm
+    assert mc.get("has_audio"), mc
+    assert mc.get("h") and mc["h"] < 360, mc
+    assert 2.0 <= float(mc.get("duration") or 0) <= 3.6, mc
+    print("test_prepare_video_ffmpeg OK")
 
 
 def test_env_config():
@@ -120,6 +165,7 @@ if __name__ == "__main__":
     test_evaluate()
     test_post_key()
     test_crop_skips_video()
+    test_prepare_video_ffmpeg()
     test_env_config()
     print()
     print("ALL TESTS PASSED") if not failures else print(f"{len(failures)} FAILURE(S): {failures}")
