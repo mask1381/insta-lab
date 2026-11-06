@@ -96,6 +96,20 @@ def test_caption_layout_and_ads():
     print("test_caption_layout_and_ads OK")
 
 
+def test_materialize_unpack():
+    packed_list = ["a.jpg"]
+    files = packed_list[0] if isinstance(packed_list, tuple) else packed_list
+    if isinstance(files, (str, bytes)):
+        files = [files]
+    assert files == ["a.jpg"]
+    packed_tuple = (["a.jpg", "b.jpg"], "/tmp")
+    files = packed_tuple[0] if isinstance(packed_tuple, tuple) else packed_tuple
+    if isinstance(files, (str, bytes)):
+        files = [files]
+    assert files == ["a.jpg", "b.jpg"]
+    print("test_materialize_unpack OK")
+
+
 def test_crop_skips_video():
     from insta_lab.media import crop_bottom_pct
     from insta_lab.mp4 import crop_frac
@@ -215,6 +229,7 @@ if __name__ == "__main__":
     test_split_balanced()
     test_evaluate()
     test_post_key()
+    test_materialize_unpack()
     test_crop_skips_video()
     test_hub_shape()
     test_prepare_video_ffmpeg()

@@ -117,6 +117,9 @@ class AckSink:
     def sent_ids(self, item_ids: list) -> None:
         pass  # per-post ack ذیلِ همین قالب می‌رود؛ این برای سازگاریِ ذخیره است
 
+    def sent(self, item_ids: list) -> None:
+        self.sent_ids(item_ids)
+
     def blob(self, kind: str, data) -> None:
         raw = json.dumps(data, separators=(",", ":")).replace(" ", "\\u0020")
         for i in range(0, len(raw), 3000):
@@ -189,9 +192,12 @@ def send_one(post, rules, target, when, workdir) -> tuple:
 
     caption = build_caption(post.get("caption") or "", only_tags=bool((rules or {}).get("only_tags")), rules=rules)
 
-    files, _wd = materialize(post, rules, workdir)
+    packed = materialize(post, rules, workdir)
+    files = packed[0] if isinstance(packed, tuple) else packed
     if not files:
         return ("skipped", "no_media", None)
+    if isinstance(files, (str, bytes)):
+        files = [files]
 
     try:
         ids = schedule_send(target, files, caption, when)
@@ -252,7 +258,11 @@ def run(batch: dict, sink: AckSink) -> int:
 
             when = parse_when(post.get("when"), make_when(now, idx, gap_min))
             post_dir = tempfile.mkdtemp(prefix=f"p{pos_idx}_", dir=workdir)
-            status, code, real_when = send_one(post, merge_rules(rules, post), target, when, post_dir)
+            try:
+                status, code, real_when = send_one(post, merge_rules(rules, post), target, when, post_dir)
+            except Exception as e:
+                log(f"post {pos_idx} crashed: {type(e).__name__}: {e}")
+                status, code, real_when = "failed", type(e).__name__[:40], None
             sink.ack(pos_idx, status, code, fmt_when(real_when))
             time.sleep(SEND_GAP_SECONDS if status == "sent" else 0.2)
             if status == "sent" and key:
@@ -303,10 +313,10 @@ def main() -> int:
         else:
             head = f"🧾 {args.batch_id} (dry)"
         tail = LOG_BUF.getvalue()[-LOG_TAIL:]
-        if tail:
-            for i in range(0, len(tail), 3800):
-                say(chat, f"{head}\n{tail[i:i + 3800]}")
-                time.sleep(ACK_GAP)
+        body = f"{head}\n{tail}" if tail else head
+        for i in range(0, len(body), 3800):
+            say(chat, body[i:i + 3800])
+            time.sleep(ACK_GAP)
     say(chat, f"/ack {args.batch_id} done")
     c = sink.counts
     print(f"finished: sent={c['sent']} skipped={c['skipped']} failed={c['failed']} "
