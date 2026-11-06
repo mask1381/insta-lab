@@ -259,6 +259,14 @@ def test_nexus_profile():
     )
     assert "Senju is here" in typo and "Depscrition" not in typo, typo
     assert "Tokyo Revengers is an anime." in typo
+    yami = caption.build_caption(
+        "Remember when Captain Yami casually lifted Dante in his FULL BODY DEVIL TRANSFORMATION? Bro was facing a devil-powered monster.\nDante had 100% devil power.\n#blackclover #yami",
+        rules={"raw_caption": True, "split_title": True, "own_hashtags": True},
+    )
+    assert "<b>Remember when Captain Yami" in yami, yami
+    assert "DEVIL TRANSFORMATION?" in yami
+    assert "Bro was facing" in yami
+    assert yami.find("Bro was facing") > yami.find("</b>"), yami
     assert "so crazy" in amv and "Anime Details" not in amv, amv
     assert "Firefly Wedding is an anime." in amv, amv
     assert "#AMV" in amv and "#hotarunoyomeiri" in amv and "#animeedit" not in amv.lower()

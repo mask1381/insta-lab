@@ -484,6 +484,11 @@ def profile_parts(raw: str, rules: dict | None = None, pack: dict | None = None)
             lines = [l.strip() for l in body.splitlines() if l.strip() and not _JUNK_LINE.match(l)]
             if lines:
                 title, body = lines[0], "\n".join(lines[1:]).strip()
+                if len(title) > 80:
+                    sent = re.match(r"(.{12,140}?[.!?؟])(?:\s+|$)", title)
+                    if sent:
+                        title, extra = sent.group(1).strip(), title[sent.end():].strip()
+                        body = "\n".join(x for x in (extra, body) if x)
     else:
         body = _apply_strip(_drop_block_lines(text, r.get("strip_blocks")), [])
         if r.get("keep_lines"):
@@ -498,6 +503,11 @@ def profile_parts(raw: str, rules: dict | None = None, pack: dict | None = None)
             lines = [l.strip() for l in body.splitlines() if l.strip()]
             if lines:
                 title, body = lines[0], "\n".join(lines[1:]).strip()
+                if len(title) > 80:
+                    sent = re.match(r"(.{12,140}?[.!?؟])(?:\s+|$)", title)
+                    if sent:
+                        title, extra = sent.group(1).strip(), title[sent.end():].strip()
+                        body = "\n".join(x for x in (extra, body) if x)
         if body and r.get("strip_label"):
             try:
                 body = re.sub(str(r["strip_label"]), "", body, count=1, flags=re.I).strip()
