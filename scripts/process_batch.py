@@ -187,7 +187,7 @@ def send_one(post, rules, target, when, workdir) -> tuple:
     if is_ad_text(post.get("caption") or ""):
         return ("skipped", "ad", None)
 
-    caption = build_caption(post.get("caption") or "", only_tags=bool((rules or {}).get("only_tags")))
+    caption = build_caption(post.get("caption") or "", only_tags=bool((rules or {}).get("only_tags")), rules=rules)
 
     files, _wd = materialize(post, rules, workdir)
     if not files:

@@ -36,7 +36,7 @@ def prepare(post: dict, rules: dict | None = None) -> dict:
     out = evaluate(post, rules)
     if out["ready"]:
         r = rules or {}
-        out["caption"] = cap.build_caption(post.get("caption") or "", only_tags=bool(r.get("only_tags")))
+        out["caption"] = cap.build_caption(post.get("caption") or "", only_tags=bool(r.get("only_tags")), rules=r)
     return out
 
 

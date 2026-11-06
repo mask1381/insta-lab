@@ -151,10 +151,132 @@ def _has_footer(body: str, footer: str) -> bool:
     return bool(key) and key in body
 
 
-def build_caption(original: str, only_tags: bool = False) -> str:
+_GAMES = [
+    ("WutheringWaves", re.compile(r"wuthering\s*waves|#wuwa\b", re.I)),
+    ("GenshinImpact", re.compile(r"genshin|#gi\b(?![a-z])", re.I)),
+    ("HonkaiStarRail", re.compile(r"star\s*rail|#hsr\b", re.I)),
+    ("ZenlessZoneZero", re.compile(r"zenless|#zzz\b", re.I)),
+]
+_TOPIC_ORDER = ["Redeem_Code", "Clip", "Demo", "Guide", "Event", "Art", "News", "Leak"]
+_TOPIC_RE = {
+    "Redeem_Code": re.compile(r"#redeem|#code\b|redeem\s*code", re.I),
+    "Clip": re.compile(r"#clip\b|\bextract\b|\bclip\b", re.I),
+    "Demo": re.compile(r"#demo\b|character trailer|official trailer|\bdemo\b", re.I),
+    "Guide": re.compile(r"#guide\b|creation guide", re.I),
+    "Event": re.compile(r"#event\b|〓event|creator contest|#birthday\b", re.I),
+    "Art": re.compile(r"#art\b|wallpaper|download\s*hd", re.I),
+    "News": re.compile(r"#news\b|read full article|livestream recap", re.I),
+    "Leak": re.compile(r"#leak\b|(?:^|\n)via\s+[A-Za-z]", re.I | re.M),
+}
+_CHAR_ALIASES = {
+    "anastasyafeodorovnasnezhnaya": "Anastasya", "anastasya": "Anastasya",
+    "tsaritsa": "Anastasya", "tsaritsas": "Anastasya",
+    "furinadefontaine": "Furina", "furina": "Furina",
+    "ilcapitano": "Capitano", "capitano": "Capitano",
+    "kukishinobu": "KukiShinobu", "mitya": "Mitya", "danica": "Danica",
+    "valeriy": "Valeriy", "noy": "Noy", "varka": "Varka", "lily": "Lily",
+    "hiyuki": "Hiyuki", "suoming": "Suoming", "hsin": "Hsin",
+    "sandrone": "Sandrone", "odette": "Odette", "qiqi": "Qiqi",
+}
+_JUNK = {
+    "hoyoverse", "mihoyo", "kurogames", "instagram", "insta", "fyp", "viral",
+    "explore", "anime", "game", "gaming", "waifu", "official", "livestream",
+    "wuwalivestream", "wuwapc", "wuwa", "genshin", "gi", "honkai", "zzz", "hsr",
+    "art", "leak", "news", "clip", "demo", "event", "guide", "birthday", "follow", "like",
+    "genshinimpact", "wutheringwaves", "honkaistarrail", "zenlesszonezero", "honkaiimpact",
+    "redeemcode", "redeem_code",
+}
+
+
+def _nk(tag: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (tag or "").lstrip("#").lower())
+
+
+def shape_hub_caption(raw: str, topic_mode: str = "auto", aliases: dict | None = None) -> str:
+    """قالب Hub: تیتر + Via + حداکثر ۳ هشتگ (موضوع، بازی، یک کاراکتر)."""
+    als = {**_CHAR_ALIASES, **(aliases or {})}
+    text = re.sub(r"^✦.*$", "", str(raw or ""), flags=re.M)
+    text = re.sub(r"^↠.*$", "", text, flags=re.M)
+    text = re.sub(r"follow us for more[^\n]*", "", text, flags=re.I)
+    tags = [t.lstrip("#") for t in extract_hashtags(text)]
+    lines = []
+    for l in text.splitlines():
+        s = l.strip()
+        if not s or _is_hashtag_only(s) or s.startswith("✦") or s.startswith("↠"):
+            continue
+        lines.append(s)
+    via = [l for l in lines if re.match(r"^(via |source:)", l, re.I)]
+    body = [re.sub(r"#[^\s#]+", "", l).strip() for l in lines if not re.match(r"^(via |source:)", l, re.I)]
+    body = [l for l in body if l and not re.match(r"^link in bio", l, re.I)]
+    title = body[0] if body else ""
+    rest = body[1:]
+    blob = f"{title}\n{chr(10).join(rest)}\n{chr(10).join(via)}\n" + " ".join(f"#{t}" for t in tags)
+    game = next((n for n, rx in _GAMES if rx.search(blob)), "")
+    found = [n for n in _TOPIC_ORDER if _TOPIC_RE[n].search(blob)]
+    hit = found[0] if found else ""
+    mode = topic_mode or "auto"
+    if mode == "official":
+        topic = next((t for t in found if t != "Leak"), "") or "News"
+    elif mode == "leak":
+        topic = hit if hit and hit not in ("Leak", "News") else ("News" if hit == "News" else "Leak")
+    else:
+        topic = hit
+    char = ""
+    for t in tags:
+        key = _nk(t)
+        if key in _JUNK:
+            continue
+        if als.get(key):
+            char = als[key]
+            break
+        pretty = t
+        if len(pretty) > 22:
+            parts = re.findall(r"[A-Z][a-z]{2,}", pretty)
+            char = als.get(_nk(parts[0]), parts[0]) if parts else ""
+            if char:
+                break
+        elif re.match(r"^[A-Z][A-Za-z]{2,21}$", pretty):
+            char = pretty
+            break
+    out_tags = []
+    if topic:
+        out_tags.append(f"#{topic}")
+    if game:
+        out_tags.append(f"#{game}")
+    if char and _nk(char) not in {_nk(game), _nk(topic)}:
+        out_tags.append(f"#{char}")
+    parts = [title] if title else []
+    read = [l for l in rest if re.search(r"read full|youtube:", l, re.I)][-1:]
+    mid = via + [l for l in rest if not re.search(r"read full|youtube:", l, re.I)]
+    mid = [l for l in mid if l != title][:6]
+    if read:
+        mid.append(read[0])
+    if mid:
+        parts.append("\n".join(mid))
+    if out_tags:
+        parts.append(" ".join(out_tags))
+    return "\n\n".join(p for p in parts if p).strip()
+
+
+def build_caption(original: str, only_tags: bool = False, rules: dict | None = None) -> str:
     """کپشن نهایی طبق قرارداد بات (چیدمان) یا پاس‌ثرو + برند/فوتر."""
     limit = config.MAX_TG_CAPTION_LEN
     cfg = _CFG if isinstance(_CFG, dict) else {}
+    if cfg.get("hub_policy") and not only_tags:
+        body = shape_hub_caption(
+            original or "",
+            topic_mode=str((rules or {}).get("topic_mode") or "auto"),
+            aliases=cfg.get("hub_aliases") if isinstance(cfg.get("hub_aliases"), dict) else None,
+        )
+        suffix = _FOOTER
+        if _BRAND_TAG:
+            suffix = ("#" + _BRAND_TAG) + (("\n\n" + suffix) if suffix else "")
+        if _has_footer(body, _FOOTER):
+            suffix = ("#" + _BRAND_TAG) if _BRAND_TAG else ""
+        suffix_cost = len(suffix) + (2 if body and suffix else 0)
+        body = trim_caption(body, limit=max(0, limit - suffix_cost))
+        text = body + (("\n\n" + suffix) if body and suffix else suffix)
+        return text[:limit] if text else ""
     layout = [x for x in (cfg.get("layout") or []) if isinstance(x, str)]
 
     if only_tags or not layout:
