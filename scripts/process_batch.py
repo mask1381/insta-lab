@@ -204,9 +204,9 @@ def run(batch: dict, sink: AckSink) -> int:
     try:
         for idx, post in enumerate(posts):
             pos_idx = post.get("idx", idx)
-            # dedup: shortcode قبلاً فرستاده‌شده = ردِ بی‌صدا
+            # dedup: shortcode قبلاً فرستاده‌شده = ردِ بی‌صدا (force از ارسال دستی رد می‌کند)
             key = post_key(post)
-            if key and key in sent:
+            if key and key in sent and not batch.get("force") and not post.get("force"):
                 sink.ack(pos_idx, "skipped", "duplicate", "-")
                 continue
 
@@ -218,7 +218,16 @@ def run(batch: dict, sink: AckSink) -> int:
                     sink.ack(pos_idx, "skipped", check.get("skip"), "-")
                 continue
 
-            when = make_when(now, idx, gap_min)
+            when = None
+            if post.get("when"):
+                try:
+                    when = datetime.fromisoformat(str(post["when"]).replace("Z", "+00:00"))
+                    if when.tzinfo is None:
+                        when = when.replace(tzinfo=timezone.utc)
+                except Exception:
+                    when = make_when(now, idx, gap_min)
+            else:
+                when = make_when(now, idx, gap_min)
             status, code, real_when = send_one(post, rules, target, when, workdir)
             sink.ack(pos_idx, status, code, fmt_when(real_when))
             time.sleep(SEND_GAP_SECONDS if status == "sent" else 0.2)
