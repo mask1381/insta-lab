@@ -618,18 +618,26 @@ def style_result(text: str, mode: str) -> str:
 
 
 def build_caption(original: str, only_tags: bool = False, rules: dict | None = None) -> str:
-    """کپشن نهایی طبق قرارداد بات (چیدمان) یا پاس‌ثرو + برند/فوتر."""
+    """..."""
     limit = config.MAX_TG_CAPTION_LEN
     cfg = _CFG if isinstance(_CFG, dict) else {}
+    
+    # اصلاح خط ۶۲۴ تا ۶۲۶
     layout = [x for x in (cfg.get("layout") or []) if isinstance(x, str)]
+    
     rules = rules or {}
+    
+    # اصلاح خط ۶۲۷ تا ۶۲۹
     profiled = uses_profile_caption(rules, cfg) and not only_tags
 
+    # اصلاح خط ۶۳۰ به بعد
     if only_tags or (not layout and not cfg.get("hub_policy") and not profiled):
-    suffix = _FOOTER
-    if _BRAND_TAG:
-            suffix = ("#" + _BRAND_TAG) + (("\n\n" + suffix) if suffix else "")
-    if only_tags:
+        suffix = _FOOTER  # <--- این خط باید نسبت به if جلوتر باشه (۸ فاصله)
+        
+        if _BRAND_TAG:
+            suffix = ("#" + _BRAND_TAG) + ("\n\n" + suffix) if suffix else ""
+            
+        if only_tags:
             hp = profile_parts(original or "", rules, cfg.get("hub_tags") if isinstance(cfg.get("hub_tags"), dict) else {})
             body = " ".join(hp.get("hashtags") or extract_hashtags(original))
     else:
