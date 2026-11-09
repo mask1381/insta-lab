@@ -626,20 +626,20 @@ def build_caption(original: str, only_tags: bool = False, rules: dict | None = N
     profiled = uses_profile_caption(rules, cfg) and not only_tags
 
     if only_tags or (not layout and not cfg.get("hub_policy") and not profiled):
-        suffix = _FOOTER
-        if _BRAND_TAG:
+    suffix = _FOOTER
+    if _BRAND_TAG:
             suffix = ("#" + _BRAND_TAG) + (("\n\n" + suffix) if suffix else "")
-        if only_tags:
+    if only_tags:
             hp = profile_parts(original or "", rules, cfg.get("hub_tags") if isinstance(cfg.get("hub_tags"), dict) else {})
             body = " ".join(hp.get("hashtags") or extract_hashtags(original))
-        else:
-            body = (original or "").strip()
+    else:
+        body = (original or "").strip()
         if _has_footer(body, _FOOTER):
             suffix = ("#" + _BRAND_TAG) if _BRAND_TAG else ""
-        suffix_cost = len(suffix) + (2 if body and suffix else 0)
-        body = trim_caption(body, limit=max(0, limit - suffix_cost))
+    suffix_cost = len(suffix) + (2 if body and suffix else 0)
+    body = trim_caption(body, limit=max(0, limit - suffix_cost))
         text = body + (("\n\n" + suffix) if body and suffix else suffix)
-        return text[:limit] if text else ""
+    return text[:limit] if text else ""
 
     cleaned = _apply_strip(original or "", cfg.get("strip") or [])
     brand = _BRAND_TAG
