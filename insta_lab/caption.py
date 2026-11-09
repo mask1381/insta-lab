@@ -646,7 +646,7 @@ def build_caption(original: str, only_tags: bool = False, rules: dict | None = N
             suffix = ("#" + _BRAND_TAG) if _BRAND_TAG else ""
     suffix_cost = len(suffix) + (2 if body and suffix else 0)
     body = trim_caption(body, limit=max(0, limit - suffix_cost))
-        text = body + (("\n\n" + suffix) if body and suffix else suffix)
+    text = body + (("\n\n" + suffix) if body and suffix else suffix)
     return text[:limit] if text else ""
 
     cleaned = _apply_strip(original or "", cfg.get("strip") or [])
